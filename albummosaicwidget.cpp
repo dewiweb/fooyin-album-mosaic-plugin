@@ -35,6 +35,7 @@
 #include <core/library/musiclibrary.h>
 #include <core/player/playercontroller.h>
 #include <core/track.h>
+#include <core/engine/audioloader.h>
 #include <gui/coverprovider.h>
 #include <gui/trackselectioncontroller.h>
 #include <core/plugins/coreplugincontext.h>
@@ -159,7 +160,18 @@ QPixmap AlbumMosaicWidget::loadAlbumCover(const AlbumInfo& album)
         // Use trackCoverThumbnail which is synchronous and returns cached covers
         QPixmap cover = m_coverProvider->trackCoverThumbnail(albumTrack, Fooyin::CoverProvider::VeryLarge);
         
-        // If cover is null or a placeholder, trigger async loading
+        // If cover is null or a placeholder, try AudioLoader as fallback
+        if(cover.isNull() || cover.width() == 1 || cover.height() == 1) {
+            if(m_coreContext && m_coreContext->audioLoader) {
+                // Use AudioLoader directly to load the cover
+                QByteArray coverData = m_coreContext->audioLoader->readTrackCover(albumTrack, Fooyin::Track::Cover::Front);
+                if(!coverData.isEmpty()) {
+                    cover.loadFromData(coverData);
+                }
+            }
+        }
+        
+        // If still null or placeholder, trigger async loading from CoverProvider
         if(cover.isNull() || cover.width() == 1 || cover.height() == 1) {
             // Trigger async loading - CoverProvider will emit coverAdded when done
             m_coverProvider->trackCoverThumbnailAsync(albumTrack, Fooyin::CoverProvider::VeryLarge);
@@ -388,9 +400,14 @@ void AlbumMosaicWidget::playAlbum(const QString& album, const QString& albumArti
     qDebug() << "Playing album:" << album << "by" << albumArtist << "with" << albumTracks.size() << "tracks";
     
     // Use PlayerController to play the album
-    // Replace the current tracks with the album tracks and start playback
     if(m_coreContext && m_coreContext->playerController) {
+        // Stop current playback
+        m_coreContext->playerController->stop();
+        
+        // Replace the current tracks with the album tracks
         m_coreContext->playerController->replaceTracks(albumTracks);
+        
+        // Start playback
         m_coreContext->playerController->play();
     }
 }
