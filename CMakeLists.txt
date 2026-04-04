@@ -15,7 +15,7 @@ find_package(Fooyin)
 
 create_fooyin_plugin(
     albummosaicplugin
-    DEPENDS Fooyin::Gui
+    DEPENDS Fooyin::Gui Fooyin::Core
     SOURCES albummosaicplugin.cpp
             albummosaicplugin.h
             albummosaicwidget.cpp

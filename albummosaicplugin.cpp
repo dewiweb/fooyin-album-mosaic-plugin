@@ -23,8 +23,13 @@
 
 #include <gui/widgetprovider.h>
 
+void AlbumMosaicPlugin::initialise(const Fooyin::CorePluginContext& context)
+{
+    m_core = std::make_unique<Fooyin::CorePluginContext>(context);
+}
+
 void AlbumMosaicPlugin::initialise(const Fooyin::GuiPluginContext& context)
 {
     m_context = const_cast<Fooyin::GuiPluginContext*>(&context);
-    context.widgetProvider->registerWidget("AlbumMosaic", [this]() { return new AlbumMosaicWidget(m_context); }, "Album Mosaic");
+    context.widgetProvider->registerWidget("AlbumMosaic", [this]() { return new AlbumMosaicWidget(m_context, m_core.get()); }, "Album Mosaic");
 }

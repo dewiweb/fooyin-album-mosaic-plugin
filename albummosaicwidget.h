@@ -22,10 +22,10 @@
 #include <gui/fywidget.h>
 
 #include <QPixmap>
-#include <QFuture>
 #include <QVector>
 #include <QMap>
 #include <QRect>
+#include <core/plugins/coreplugincontext.h>
 #include <gui/plugins/guiplugin.h>
 
 struct AlbumInfo {
@@ -37,6 +37,7 @@ struct AlbumInfo {
 
 namespace Fooyin {
 class GuiPluginContext;
+class CorePluginContext;
 }
 
 class AlbumMosaicWidget : public Fooyin::FyWidget
@@ -44,7 +45,7 @@ class AlbumMosaicWidget : public Fooyin::FyWidget
     Q_OBJECT
 
 public:
-    explicit AlbumMosaicWidget(Fooyin::GuiPluginContext* context, QWidget* parent = nullptr);
+    explicit AlbumMosaicWidget(Fooyin::GuiPluginContext* guiContext, Fooyin::CorePluginContext* coreContext, QWidget* parent = nullptr);
     ~AlbumMosaicWidget() override;
 
     QString name() const override;
@@ -65,14 +66,13 @@ private:
     void flipAnimation();
     void randomizeGrid();
     void playAlbum(const QString& album, const QString& albumArtist);
-    void checkEmbeddedCovers();
 
-    Fooyin::GuiPluginContext* m_context;
+    Fooyin::GuiPluginContext* m_guiContext;
+    Fooyin::CorePluginContext* m_coreContext;
     QTimer* m_flipTimer;
     QVector<AlbumInfo> m_albums;
     QMap<QString, QPixmap> m_coverCache; // Cache of loaded covers
     QMap<QString, qint64> m_lastUsedTime; // Track when each cover was last used
-    QMap<QString, QFuture<QByteArray>> m_embeddedCoverFutures; // Async embedded cover extraction
     static constexpr int MAX_CACHE_SIZE = 200; // Maximum number of covers to keep in cache
     QVector<QRect> m_coverPositions;
     QVector<int> m_currentGridIndices;

@@ -25,15 +25,18 @@
 
 class AlbumMosaicPlugin : public QObject,
                          public Fooyin::Plugin,
+                         public Fooyin::CorePlugin,
                          public Fooyin::GuiPlugin
 {
 public:
     Q_OBJECT
     Q_PLUGIN_METADATA(IID "org.fooyin.fooyin.plugin/1.0" FILE "metadata.json")
-    Q_INTERFACES(Fooyin::Plugin Fooyin::GuiPlugin)
+    Q_INTERFACES(Fooyin::Plugin Fooyin::CorePlugin Fooyin::GuiPlugin)
 
+    void initialise(const Fooyin::CorePluginContext& context) override;
     void initialise(const Fooyin::GuiPluginContext& context) override;
 
 private:
+    std::unique_ptr<Fooyin::CorePluginContext> m_core;
     Fooyin::GuiPluginContext* m_context{nullptr};
 };
