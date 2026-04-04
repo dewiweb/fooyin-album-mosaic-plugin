@@ -56,13 +56,6 @@ The plugin should appear in the list of available widgets in Fooyin.
 5. Use mouse wheel to scroll infinitely through your albums
 6. Click on a cover to play the album
 
-## Configuration
-
-The plugin automatically uses the Fooyin database located at:
-`~/.local/share/fooyin/fooyin.db`
-
-No manual configuration is required.
-
 ## Architecture
 
 ### Plugin Structure
