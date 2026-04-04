@@ -162,7 +162,8 @@ void AlbumMosaicWidget::updateMosaic()
             const int globalIndex = globalRow * cols + col;
             
             // Use modulo to cycle through albums infinitely
-            const int albumIndex = globalIndex % m_albums.size();
+            // Handle negative indices by adding size before modulo
+            const int albumIndex = ((globalIndex % m_albums.size()) + m_albums.size()) % m_albums.size();
             
             const int x = col * cellWidth;
             const int y = row * cellHeight;
