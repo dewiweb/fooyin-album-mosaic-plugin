@@ -4,7 +4,7 @@ project(
     albummosaicplugin
     VERSION 1.0.0
     DESCRIPTION "Album Mosaic Plugin for Fooyin - iTunes style album art display"
-    HOMEPAGE_URL "https://github.com/yourusername/albums_background"
+    HOMEPAGE_URL "https://github.com/dewiweb/fooyin-album-mosaic-plugin"
     LANGUAGES CXX
 )
 
