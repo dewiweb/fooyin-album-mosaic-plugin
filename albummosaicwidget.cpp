@@ -36,10 +36,11 @@
 #include <gui/trackselectioncontroller.h>
 #include <core/plugins/coreplugincontext.h>
 
-AlbumMosaicWidget::AlbumMosaicWidget(Fooyin::GuiPluginContext* guiContext, Fooyin::CorePluginContext* coreContext, QWidget* parent)
+AlbumMosaicWidget::AlbumMosaicWidget(Fooyin::GuiPluginContext* guiContext, Fooyin::CorePluginContext* coreContext, Fooyin::CoverProvider* coverProvider, QWidget* parent)
     : FyWidget{parent}
     , m_guiContext{guiContext}
     , m_coreContext{coreContext}
+    , m_coverProvider{coverProvider}
     , m_flipTimer{new QTimer(this)}
     , m_currentFlipIndex{0}
     , m_isFlipping{false}
@@ -138,30 +139,24 @@ QPixmap AlbumMosaicWidget::loadAlbumCover(const AlbumInfo& album)
         return QPixmap();
     }
     
-    // Create CoverProvider if not already created
-    static Fooyin::CoverProvider* coverProvider = nullptr;
-    if(!coverProvider && m_coreContext->audioLoader && m_coreContext->settingsManager) {
-        coverProvider = new Fooyin::CoverProvider(m_coreContext->audioLoader, m_coreContext->settingsManager, nullptr);
-    }
-    
-    if(!coverProvider) {
-        return QPixmap();
-    }
-    
-    // Use CoverProvider to get the cover
-    QPixmap cover = coverProvider->trackCoverThumbnail(albumTrack, Fooyin::CoverProvider::VeryLarge);
-    
-    if(!cover.isNull()) {
-        // Scale to max 256x256
-        if(cover.width() > 256 || cover.height() > 256) {
-            cover = cover.scaled(256, 256, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    // Use the passed CoverProvider to get the cover
+    if(m_coverProvider) {
+        QPixmap cover = m_coverProvider->trackCoverThumbnail(albumTrack, Fooyin::CoverProvider::VeryLarge);
+        
+        if(!cover.isNull()) {
+            // Scale to max 256x256
+            if(cover.width() > 256 || cover.height() > 256) {
+                cover = cover.scaled(256, 256, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+            }
+            m_coverCache[cacheKey] = cover;
+            m_lastUsedTime[cacheKey] = QDateTime::currentMSecsSinceEpoch();
+            cleanupCache();
         }
-        m_coverCache[cacheKey] = cover;
-        m_lastUsedTime[cacheKey] = QDateTime::currentMSecsSinceEpoch();
-        cleanupCache();
+        
+        return cover;
     }
     
-    return cover;
+    return QPixmap();
 }
 
 void AlbumMosaicWidget::cleanupCache()

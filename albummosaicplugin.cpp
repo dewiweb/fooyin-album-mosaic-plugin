@@ -22,14 +22,19 @@
 #include "albummosaicwidget.h"
 
 #include <gui/widgetprovider.h>
+#include <gui/coverprovider.h>
 
 void AlbumMosaicPlugin::initialise(const Fooyin::CorePluginContext& context)
 {
     m_core = std::make_unique<Fooyin::CorePluginContext>(context);
+    // Create CoverProvider with AudioLoader and SettingsManager
+    if(context.audioLoader && context.settingsManager) {
+        m_coverProvider = new Fooyin::CoverProvider(context.audioLoader, context.settingsManager, this);
+    }
 }
 
 void AlbumMosaicPlugin::initialise(const Fooyin::GuiPluginContext& context)
 {
     m_context = const_cast<Fooyin::GuiPluginContext*>(&context);
-    context.widgetProvider->registerWidget("AlbumMosaic", [this]() { return new AlbumMosaicWidget(m_context, m_core.get()); }, "Album Mosaic");
+    context.widgetProvider->registerWidget("AlbumMosaic", [this]() { return new AlbumMosaicWidget(m_context, m_core.get(), m_coverProvider); }, "Album Mosaic");
 }

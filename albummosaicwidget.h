@@ -38,6 +38,7 @@ struct AlbumInfo {
 namespace Fooyin {
 class GuiPluginContext;
 class CorePluginContext;
+class CoverProvider;
 }
 
 class AlbumMosaicWidget : public Fooyin::FyWidget
@@ -45,7 +46,7 @@ class AlbumMosaicWidget : public Fooyin::FyWidget
     Q_OBJECT
 
 public:
-    explicit AlbumMosaicWidget(Fooyin::GuiPluginContext* guiContext, Fooyin::CorePluginContext* coreContext, QWidget* parent = nullptr);
+    explicit AlbumMosaicWidget(Fooyin::GuiPluginContext* guiContext, Fooyin::CorePluginContext* coreContext, Fooyin::CoverProvider* coverProvider, QWidget* parent = nullptr);
     ~AlbumMosaicWidget() override;
 
     QString name() const override;
@@ -69,6 +70,7 @@ private:
 
     Fooyin::GuiPluginContext* m_guiContext;
     Fooyin::CorePluginContext* m_coreContext;
+    Fooyin::CoverProvider* m_coverProvider;
     QTimer* m_flipTimer;
     QVector<AlbumInfo> m_albums;
     QMap<QString, QPixmap> m_coverCache; // Cache of loaded covers

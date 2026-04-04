@@ -23,6 +23,12 @@
 #include <core/plugins/plugin.h>
 #include <gui/plugins/guiplugin.h>
 
+namespace Fooyin {
+class CorePluginContext;
+class GuiPluginContext;
+class CoverProvider;
+}
+
 class AlbumMosaicPlugin : public QObject,
                          public Fooyin::Plugin,
                          public Fooyin::CorePlugin,
@@ -39,4 +45,5 @@ public:
 private:
     std::unique_ptr<Fooyin::CorePluginContext> m_core;
     Fooyin::GuiPluginContext* m_context{nullptr};
+    Fooyin::CoverProvider* m_coverProvider{nullptr};
 };
