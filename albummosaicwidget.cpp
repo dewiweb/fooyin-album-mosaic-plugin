@@ -188,7 +188,10 @@ void AlbumMosaicWidget::loadAlbumMetadata()
     
     QSqlDatabase::removeDatabase("fooyin_connection");
     
-    qDebug() << "Loaded" << m_albums.size() << "albums from Fooyin library (metadata only)";
+    // Shuffle albums for more random display
+    std::shuffle(m_albums.begin(), m_albums.end(), *QRandomGenerator::global());
+    
+    qDebug() << "Loaded" << m_albums.size() << "albums from Fooyin library (metadata only, shuffled)";
 }
 
 QPixmap AlbumMosaicWidget::loadAlbumCover(const AlbumInfo& album)
