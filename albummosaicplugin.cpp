@@ -1,6 +1,6 @@
 /*
  * Album Mosaic Plugin
- * Copyright 2024, Your Name
+ * Copyright 2026, dewiweb
  *
  * Album Mosaic Plugin is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
