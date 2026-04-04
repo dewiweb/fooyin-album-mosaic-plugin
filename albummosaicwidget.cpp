@@ -30,6 +30,7 @@
 #include <QFont>
 #include <QWheelEvent>
 #include <core/library/musiclibrary.h>
+#include <core/player/playercontroller.h>
 #include <core/track.h>
 #include <gui/coverprovider.h>
 #include <gui/trackselectioncontroller.h>
@@ -350,7 +351,9 @@ void AlbumMosaicWidget::playAlbum(const QString& album, const QString& albumArti
     
     for(const Fooyin::Track& track : tracks) {
         if(track.album() == album && track.albumArtist() == albumArtist) {
-            albumTracks.push_back(track);
+            if(track.isValid()) {
+                albumTracks.push_back(track);
+            }
         }
     }
     
@@ -366,14 +369,11 @@ void AlbumMosaicWidget::playAlbum(const QString& album, const QString& albumArti
     
     qDebug() << "Playing album:" << album << "by" << albumArtist << "with" << albumTracks.size() << "tracks";
     
-    // Use TrackSelectionController to play the album
-    if(m_guiContext && m_guiContext->trackSelection) {
-        Fooyin::TrackSelection selection;
-        selection.tracks = albumTracks;
-        selection.playbackOnSend = true;
-        
-        m_guiContext->trackSelection->changeSelectedTracks(selection);
-        m_guiContext->trackSelection->executeAction(Fooyin::TrackAction::Play);
+    // Use PlayerController to play the album
+    // Replace the current tracks with the album tracks and start playback
+    if(m_coreContext && m_coreContext->playerController) {
+        m_coreContext->playerController->replaceTracks(albumTracks);
+        m_coreContext->playerController->play();
     }
 }
 
