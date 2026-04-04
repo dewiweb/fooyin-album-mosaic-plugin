@@ -28,8 +28,10 @@ void AlbumMosaicPlugin::initialise(const Fooyin::CorePluginContext& context)
 {
     m_core = std::make_unique<Fooyin::CorePluginContext>(context);
     // Create CoverProvider with AudioLoader and SettingsManager
+    // Note: CoverProvider has a static cache, so all instances share the same cache
     if(context.audioLoader && context.settingsManager) {
         m_coverProvider = new Fooyin::CoverProvider(context.audioLoader, context.settingsManager, this);
+        m_coverProvider->setUsePlaceholder(false); // Don't use placeholder covers
     }
 }
 

@@ -28,12 +28,14 @@
 #include <QFutureWatcher>
 #include <core/plugins/coreplugincontext.h>
 #include <gui/plugins/guiplugin.h>
+#include <core/track.h>
 
 struct AlbumInfo {
     QString album;
     QString albumArtist;
     QString filePath;
     QString coverPath; // Path to cover file, not the loaded image
+    Fooyin::Track track; // Store track reference for CoverProvider
 };
 
 namespace Fooyin {
@@ -62,8 +64,6 @@ protected:
 
 private:
     void loadAlbumMetadata();
-    QPixmap loadAlbumCover(const AlbumInfo& album);
-    void cleanupCache();
     void updateMosaic();
     void flipAnimation();
     void randomizeGrid();
@@ -74,9 +74,6 @@ private:
     Fooyin::CoverProvider* m_coverProvider;
     QTimer* m_flipTimer;
     QVector<AlbumInfo> m_albums;
-    QMap<QString, QPixmap> m_coverCache; // Cache of loaded covers
-    QMap<QString, qint64> m_lastUsedTime; // Track when each cover was last used
-    static constexpr int MAX_CACHE_SIZE = 200; // Maximum number of covers to keep in cache
     QVector<QRect> m_coverPositions;
     QVector<int> m_currentGridIndices;
     int m_currentFlipIndex;

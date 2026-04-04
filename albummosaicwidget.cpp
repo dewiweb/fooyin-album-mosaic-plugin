@@ -20,9 +20,10 @@
 #include "albummosaicwidget.h"
 
 #include <QPainter>
-#include <QTimer>
-#include <QRandomGenerator>
 #include <QMouseEvent>
+#include <QWheelEvent>
+#include <QRandomGenerator>
+#include <QTimer>
 #include <QDebug>
 #include <QDateTime>
 #include <algorithm>
@@ -78,11 +79,19 @@ void AlbumMosaicWidget::loadAlbumMetadata()
 {
     // Load album metadata from MusicLibrary
     if(!m_coreContext || !m_coreContext->library) {
-        qDebug() << "MusicLibrary not available";
+        qDebug() << "[METADATA] MusicLibrary not available";
         return;
     }
     
     Fooyin::TrackList tracks = m_coreContext->library->tracks();
+    qDebug() << "[METADATA] Total tracks in library:" << tracks.size();
+    
+    // If library is empty, schedule a retry
+    if(tracks.empty()) {
+        qDebug() << "[METADATA] Library is empty, will retry in 2 seconds";
+        QTimer::singleShot(2000, this, &AlbumMosaicWidget::loadAlbumMetadata);
+        return;
+    }
     
     QSet<QString> uniqueAlbums;
     
@@ -98,11 +107,12 @@ void AlbumMosaicWidget::loadAlbumMetadata()
         if(!uniqueAlbums.contains(albumKey)) {
             uniqueAlbums.insert(albumKey);
             
-            // Store album metadata (CoverProvider will handle cover loading)
+            // Store album metadata with track reference for CoverProvider
             AlbumInfo info;
             info.album = album;
             info.albumArtist = albumArtist;
             info.filePath = track.filepath();
+            info.track = track; // Store the track for CoverProvider
             info.coverPath.clear(); // CoverProvider will handle this
             m_albums.append(info);
         }
@@ -113,113 +123,22 @@ void AlbumMosaicWidget::loadAlbumMetadata()
     
     qDebug() << "Loaded" << m_albums.size() << "albums from Fooyin library (metadata only, shuffled)";
     
+    // Update mosaic and grid after loading metadata
+    updateMosaic();
+    randomizeGrid();
+    
     // Connect to CoverProvider's coverAdded signal to repaint when covers are loaded
     if(m_coverProvider) {
         connect(m_coverProvider, &Fooyin::CoverProvider::coverAdded, this, [this](const Fooyin::Track& track) {
-            QString cacheKey = track.album() + "|" + track.albumArtist();
-            // Remove from cache to force reload on next paint
-            m_coverCache.remove(cacheKey);
-            qDebug() << "Cover added for:" << track.album() << "by" << track.albumArtist();
-            // Repaint to show the new cover
-            update();
-        });
-    }
-}
-
-QPixmap AlbumMosaicWidget::loadAlbumCover(const AlbumInfo& album)
-{
-    QString cacheKey = album.album + "|" + album.albumArtist;
-    
-    // Check cache first
-    if(m_coverCache.contains(cacheKey)) {
-        m_lastUsedTime[cacheKey] = QDateTime::currentMSecsSinceEpoch();
-        return m_coverCache[cacheKey];
-    }
-    
-    // Find a track for this album to use with CoverProvider
-    if(!m_coreContext || !m_coreContext->library) {
-        return QPixmap();
-    }
-    
-    Fooyin::TrackList tracks = m_coreContext->library->tracks();
-    Fooyin::Track albumTrack;
-    
-    for(const Fooyin::Track& track : tracks) {
-        if(track.album() == album.album && track.albumArtist() == album.albumArtist) {
-            albumTrack = track;
-            break;
-        }
-    }
-    
-    if(!albumTrack.isValid()) {
-        return QPixmap();
-    }
-    
-    // Use CoverProvider exclusively (respects user settings for cover art paths)
-    if(m_coverProvider) {
-        // Use trackCoverThumbnail which is synchronous and returns cached covers
-        QPixmap cover = m_coverProvider->trackCoverThumbnail(albumTrack, Fooyin::CoverProvider::VeryLarge);
-        
-        // If cover is null or a placeholder, try AudioLoader as fallback
-        if(cover.isNull() || cover.width() == 1 || cover.height() == 1) {
-            if(m_coreContext && m_coreContext->audioLoader) {
-                // Use AudioLoader directly to load the cover
-                QByteArray coverData = m_coreContext->audioLoader->readTrackCover(albumTrack, Fooyin::Track::Cover::Front);
-                if(!coverData.isEmpty()) {
-                    cover.loadFromData(coverData);
+            // Check if this track is in our album list
+            for(const AlbumInfo& album : m_albums) {
+                if(album.track.isValid() && album.track.id() == track.id()) {
+                    update(); // Repaint when cover for this album is loaded
+                    break;
                 }
             }
-        }
-        
-        // If still null or placeholder, trigger async loading from CoverProvider
-        if(cover.isNull() || cover.width() == 1 || cover.height() == 1) {
-            // Trigger async loading - CoverProvider will emit coverAdded when done
-            m_coverProvider->trackCoverThumbnailAsync(albumTrack, Fooyin::CoverProvider::VeryLarge);
-        }
-        
-        // Only cache if we got a valid cover (not a placeholder)
-        if(!cover.isNull() && cover.width() > 1 && cover.height() > 1) {
-            // Scale to max 256x256
-            if(cover.width() > 256 || cover.height() > 256) {
-                cover = cover.scaled(256, 256, Qt::KeepAspectRatio, Qt::SmoothTransformation);
-            }
-            m_coverCache[cacheKey] = cover;
-            m_lastUsedTime[cacheKey] = QDateTime::currentMSecsSinceEpoch();
-            cleanupCache();
-        }
-        
-        return cover;
+        });
     }
-    
-    return QPixmap();
-}
-
-void AlbumMosaicWidget::cleanupCache()
-{
-    if(m_coverCache.size() <= MAX_CACHE_SIZE) {
-        return;
-    }
-    
-    // Find least recently used items
-    QList<QPair<QString, qint64>> items;
-    for(auto it = m_lastUsedTime.constBegin(); it != m_lastUsedTime.constEnd(); ++it) {
-        items.append(qMakePair(it.key(), it.value()));
-    }
-    
-    // Sort by last used time (oldest first)
-    std::sort(items.begin(), items.end(), [](const QPair<QString, qint64>& a, const QPair<QString, qint64>& b) {
-        return a.second < b.second;
-    });
-    
-    // Remove oldest items until cache size is within limit
-    int itemsToRemove = m_coverCache.size() - MAX_CACHE_SIZE;
-    for(int i = 0; i < itemsToRemove && i < items.size(); ++i) {
-        const QString& path = items[i].first;
-        m_coverCache.remove(path);
-        m_lastUsedTime.remove(path);
-    }
-    
-    qDebug() << "Cache cleanup: removed" << itemsToRemove << "items, cache size now" << m_coverCache.size();
 }
 
 void AlbumMosaicWidget::updateMosaic()
@@ -401,13 +320,15 @@ void AlbumMosaicWidget::playAlbum(const QString& album, const QString& albumArti
     
     // Use PlayerController to play the album
     if(m_coreContext && m_coreContext->playerController) {
-        // Stop current playback
-        m_coreContext->playerController->stop();
-        
         // Replace the current tracks with the album tracks
         m_coreContext->playerController->replaceTracks(albumTracks);
         
-        // Start playback
+        // Change to the first track
+        if(!albumTracks.empty()) {
+            m_coreContext->playerController->changeCurrentTrack(albumTracks[0]);
+        }
+        
+        // Play
         m_coreContext->playerController->play();
     }
 }
@@ -432,23 +353,20 @@ void AlbumMosaicWidget::paintEvent(QPaintEvent* event)
             if(albumIndex < m_albums.size()) {
                 const AlbumInfo& album = m_albums[albumIndex];
                 
-                // Load cover on demand (lazy loading)
-                QPixmap cover = loadAlbumCover(album);
+                // Try to get cover from CoverProvider (uses its static cache)
+                QPixmap cover;
+                if(m_coverProvider && album.track.isValid()) {
+                    cover = m_coverProvider->trackCoverThumbnail(album.track, Fooyin::CoverProvider::VeryLarge);
+                }
                 
                 if(!cover.isNull()) {
-                    if(m_isFlipping && i == m_currentFlipIndex) {
-                        // Apply flip effect
-                        painter.save();
-                        QTransform transform;
-                        transform.translate(cell.center().x(), cell.center().y());
-                        transform.scale(m_flipProgress, 1.0f);
-                        transform.translate(-cell.center().x(), -cell.center().y());
-                        painter.setTransform(transform);
-                        painter.drawPixmap(cell, cover);
-                        painter.restore();
-                    } else {
-                        painter.drawPixmap(cell, cover);
-                    }
+                    // Scale cover to fit cell while maintaining aspect ratio
+                    QPixmap scaledCover = cover.scaled(cell.size(), Qt::KeepAspectRatio, Qt::SmoothTransformation);
+                    
+                    // Draw scaled cover centered in cell
+                    QRect destRect = scaledCover.rect();
+                    destRect.moveCenter(cell.center());
+                    painter.drawPixmap(destRect, scaledCover);
                 } else {
                     // Draw attractive placeholder with gradient
                     QLinearGradient gradient(cell.topLeft(), cell.bottomRight());
