@@ -25,6 +25,7 @@
 #include <QVector>
 #include <QMap>
 #include <QRect>
+#include <QFutureWatcher>
 #include <core/plugins/coreplugincontext.h>
 #include <gui/plugins/guiplugin.h>
 

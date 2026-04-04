@@ -29,6 +29,9 @@
 #include <QLinearGradient>
 #include <QFont>
 #include <QWheelEvent>
+#include <QDir>
+#include <QFileInfo>
+#include <QFile>
 #include <core/library/musiclibrary.h>
 #include <core/player/playercontroller.h>
 #include <core/track.h>
@@ -94,12 +97,12 @@ void AlbumMosaicWidget::loadAlbumMetadata()
         if(!uniqueAlbums.contains(albumKey)) {
             uniqueAlbums.insert(albumKey);
             
-            // Store album metadata (we'll use CoverProvider for covers)
+            // Store album metadata (CoverProvider will handle cover loading)
             AlbumInfo info;
             info.album = album;
             info.albumArtist = albumArtist;
             info.filePath = track.filepath();
-            info.coverPath.clear(); // Will use CoverProvider instead
+            info.coverPath.clear(); // CoverProvider will handle this
             m_albums.append(info);
         }
     }
@@ -108,6 +111,18 @@ void AlbumMosaicWidget::loadAlbumMetadata()
     std::shuffle(m_albums.begin(), m_albums.end(), *QRandomGenerator::global());
     
     qDebug() << "Loaded" << m_albums.size() << "albums from Fooyin library (metadata only, shuffled)";
+    
+    // Connect to CoverProvider's coverAdded signal to repaint when covers are loaded
+    if(m_coverProvider) {
+        connect(m_coverProvider, &Fooyin::CoverProvider::coverAdded, this, [this](const Fooyin::Track& track) {
+            QString cacheKey = track.album() + "|" + track.albumArtist();
+            // Remove from cache to force reload on next paint
+            m_coverCache.remove(cacheKey);
+            qDebug() << "Cover added for:" << track.album() << "by" << track.albumArtist();
+            // Repaint to show the new cover
+            update();
+        });
+    }
 }
 
 QPixmap AlbumMosaicWidget::loadAlbumCover(const AlbumInfo& album)
@@ -139,11 +154,19 @@ QPixmap AlbumMosaicWidget::loadAlbumCover(const AlbumInfo& album)
         return QPixmap();
     }
     
-    // Use the passed CoverProvider to get the cover
+    // Use CoverProvider exclusively (respects user settings for cover art paths)
     if(m_coverProvider) {
+        // Use trackCoverThumbnail which is synchronous and returns cached covers
         QPixmap cover = m_coverProvider->trackCoverThumbnail(albumTrack, Fooyin::CoverProvider::VeryLarge);
         
-        if(!cover.isNull()) {
+        // If cover is null or a placeholder, trigger async loading
+        if(cover.isNull() || cover.width() == 1 || cover.height() == 1) {
+            // Trigger async loading - CoverProvider will emit coverAdded when done
+            m_coverProvider->trackCoverThumbnailAsync(albumTrack, Fooyin::CoverProvider::VeryLarge);
+        }
+        
+        // Only cache if we got a valid cover (not a placeholder)
+        if(!cover.isNull() && cover.width() > 1 && cover.height() > 1) {
             // Scale to max 256x256
             if(cover.width() > 256 || cover.height() > 256) {
                 cover = cover.scaled(256, 256, Qt::KeepAspectRatio, Qt::SmoothTransformation);
