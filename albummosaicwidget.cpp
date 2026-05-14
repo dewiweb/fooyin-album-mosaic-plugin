@@ -38,6 +38,7 @@
 #include <QMenu>
 #include <QContextMenuEvent>
 #include <QMessageBox>
+#include <QDateTime>
 #include <cmath>
 #include <core/library/musiclibrary.h>
 #include <core/player/playercontroller.h>
@@ -63,6 +64,8 @@ AlbumMosaicWidget::AlbumMosaicWidget(Fooyin::GuiPluginContext* guiContext, Fooyi
         m_enableFlip = m_coreContext->settingsManager->value(QStringLiteral("AlbumMosaic/EnableFlip")).toBool();
         m_flipInterval = m_coreContext->settingsManager->value(QStringLiteral("AlbumMosaic/FlipInterval")).toInt();
         m_columnCount = m_coreContext->settingsManager->value(QStringLiteral("AlbumMosaic/ColumnCount")).toInt();
+        m_genreFilter = m_coreContext->settingsManager->value(QStringLiteral("AlbumMosaic/GenreFilter")).toString();
+        m_artistFilter = m_coreContext->settingsManager->value(QStringLiteral("AlbumMosaic/ArtistFilter")).toString();
     }
     
     setMouseTracking(true); // Enable mouse tracking for tooltips
@@ -109,7 +112,12 @@ void AlbumMosaicWidget::loadAlbumMetadata()
         return;
     }
     
+    // Clear existing albums before reloading
+    m_albums.clear();
     QSet<QString> uniqueAlbums;
+    
+    qDebug() << "[FILTER] Genre filter:" << (m_genreFilter.isEmpty() ? QString("None") : m_genreFilter);
+    qDebug() << "[FILTER] Artist filter:" << (m_artistFilter.isEmpty() ? QString("None") : m_artistFilter);
     
     for(const Fooyin::Track& track : tracks) {
         QString album = track.album();
@@ -117,6 +125,34 @@ void AlbumMosaicWidget::loadAlbumMetadata()
         
         if(album.isEmpty() || albumArtist.isEmpty()) {
             continue;
+        }
+        
+        // Skip if genre filter is set and track doesn't match
+        if(!m_genreFilter.isEmpty() && track.hasGenres()) {
+            bool genreMatch = false;
+            for(const QString& genre : track.genres()) {
+                // Check if the filter is contained within any genre tag (e.g., "reggae" matches "reggae, world")
+                if(genre.contains(m_genreFilter, Qt::CaseInsensitive) || m_genreFilter.contains(genre, Qt::CaseInsensitive)) {
+                    genreMatch = true;
+                    qDebug() << "[FILTER] Track matches genre:" << album << genre << "filter:" << m_genreFilter;
+                    break;
+                }
+            }
+            if(!genreMatch) {
+                continue;
+            }
+        } else if(!m_genreFilter.isEmpty() && !track.hasGenres()) {
+            // Track has no genres but filter is set
+            continue;
+        }
+        
+        // Skip if artist filter is set and track doesn't match
+        if(!m_artistFilter.isEmpty()) {
+            // Check if the filter is contained within artist or album artist (partial match)
+            if(!track.albumArtist().contains(m_artistFilter, Qt::CaseInsensitive) 
+               && !track.artist().contains(m_artistFilter, Qt::CaseInsensitive)) {
+                continue;
+            }
         }
         
         QString albumKey = album + "|" + albumArtist;
@@ -447,7 +483,7 @@ void AlbumMosaicWidget::showSettingsDialog()
         return;
     }
     
-    AlbumMosaicSettingsDialog dialog(m_coreContext->settingsManager, this);
+    AlbumMosaicSettingsDialog dialog(m_coreContext->settingsManager, m_coreContext->library, this);
     dialog.exec();
     
     // Reload settings after dialog closes
@@ -460,6 +496,8 @@ void AlbumMosaicWidget::loadSettings()
         m_enableFlip = m_coreContext->settingsManager->value(QStringLiteral("AlbumMosaic/EnableFlip")).toBool();
         m_flipInterval = m_coreContext->settingsManager->value(QStringLiteral("AlbumMosaic/FlipInterval")).toInt();
         m_columnCount = m_coreContext->settingsManager->value(QStringLiteral("AlbumMosaic/ColumnCount")).toInt();
+        m_genreFilter = m_coreContext->settingsManager->value(QStringLiteral("AlbumMosaic/GenreFilter")).toString();
+        m_artistFilter = m_coreContext->settingsManager->value(QStringLiteral("AlbumMosaic/ArtistFilter")).toString();
         
         // Restart flip timer with new settings
         if(m_enableFlip) {
@@ -471,6 +509,11 @@ void AlbumMosaicWidget::loadSettings()
         // Update mosaic with new column count
         updateMosaic();
         update();
+        
+        // Reload albums if filters changed
+        loadAlbumMetadata();
+        updateMosaic();
+        randomizeGrid();
     }
 }
 

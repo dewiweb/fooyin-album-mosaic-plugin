@@ -97,4 +97,6 @@ private:
     int m_columnCount{10};
     int m_hoveredCellIndex{-1}; // Currently hovered cell
     int m_rightClickedCellIndex{-1}; // Currently right-clicked cell
+    QString m_genreFilter; // Genre filter (empty = all genres)
+    QString m_artistFilter; // Artist filter (empty = all artists)
 };

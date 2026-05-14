@@ -22,11 +22,14 @@
 #include <QDialog>
 #include <QCheckBox>
 #include <QSpinBox>
+#include <QComboBox>
+#include <QLineEdit>
 
 class QVBoxLayout;
 
 namespace Fooyin {
 class SettingsManager;
+class MusicLibrary;
 }
 
 class AlbumMosaicSettingsDialog : public QDialog
@@ -34,7 +37,7 @@ class AlbumMosaicSettingsDialog : public QDialog
     Q_OBJECT
 
 public:
-    explicit AlbumMosaicSettingsDialog(Fooyin::SettingsManager* settingsManager, QWidget* parent = nullptr);
+    explicit AlbumMosaicSettingsDialog(Fooyin::SettingsManager* settingsManager, Fooyin::MusicLibrary* library, QWidget* parent = nullptr);
     ~AlbumMosaicSettingsDialog() override;
 
 private slots:
@@ -44,9 +47,13 @@ private slots:
 private:
     void loadSettings();
     void saveSettings();
+    void populateFiltersFromLibrary();
 
     Fooyin::SettingsManager* m_settingsManager;
+    Fooyin::MusicLibrary* m_library;
     QCheckBox* m_enableFlipCheckbox;
     QSpinBox* m_flipIntervalSpinBox;
     QSpinBox* m_columnCountSpinBox;
+    QComboBox* m_genreComboBox;
+    QComboBox* m_artistComboBox;
 };

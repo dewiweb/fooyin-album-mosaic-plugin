@@ -39,6 +39,8 @@ void AlbumMosaicPlugin::initialise(const Fooyin::CorePluginContext& context)
         context.settingsManager->createSetting(QStringLiteral("AlbumMosaic/EnableFlip"), true);
         context.settingsManager->createSetting(QStringLiteral("AlbumMosaic/FlipInterval"), 3000);
         context.settingsManager->createSetting(QStringLiteral("AlbumMosaic/ColumnCount"), 10);
+        context.settingsManager->createSetting(QStringLiteral("AlbumMosaic/GenreFilter"), QString());
+        context.settingsManager->createSetting(QStringLiteral("AlbumMosaic/ArtistFilter"), QString());
     }
 }
 
