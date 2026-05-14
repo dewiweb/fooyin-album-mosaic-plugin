@@ -23,15 +23,22 @@
 
 #include <gui/widgetprovider.h>
 #include <gui/coverprovider.h>
+#include <utils/settings/settingsmanager.h>
 
 void AlbumMosaicPlugin::initialise(const Fooyin::CorePluginContext& context)
 {
     m_core = std::make_unique<Fooyin::CorePluginContext>(context);
+    
     // Create CoverProvider with AudioLoader and SettingsManager
     // Note: CoverProvider has a static cache, so all instances share the same cache
     if(context.audioLoader && context.settingsManager) {
         m_coverProvider = new Fooyin::CoverProvider(context.audioLoader, context.settingsManager, this);
         m_coverProvider->setUsePlaceholder(false); // Don't use placeholder covers
+        
+        // Create settings for the plugin
+        context.settingsManager->createSetting(QStringLiteral("AlbumMosaic/EnableFlip"), true);
+        context.settingsManager->createSetting(QStringLiteral("AlbumMosaic/FlipInterval"), 3000);
+        context.settingsManager->createSetting(QStringLiteral("AlbumMosaic/ColumnCount"), 10);
     }
 }
 

@@ -33,6 +33,7 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QFile>
+#include <QPainterPath>
 #include <core/library/musiclibrary.h>
 #include <core/player/playercontroller.h>
 #include <core/track.h>
@@ -40,6 +41,7 @@
 #include <gui/coverprovider.h>
 #include <gui/trackselectioncontroller.h>
 #include <core/plugins/coreplugincontext.h>
+#include <utils/settings/settingsmanager.h>
 
 AlbumMosaicWidget::AlbumMosaicWidget(Fooyin::GuiPluginContext* guiContext, Fooyin::CorePluginContext* coreContext, Fooyin::CoverProvider* coverProvider, QWidget* parent)
     : FyWidget{parent}
@@ -51,9 +53,18 @@ AlbumMosaicWidget::AlbumMosaicWidget(Fooyin::GuiPluginContext* guiContext, Fooyi
     , m_isFlipping{false}
     , m_flipProgress{0.0f}
 {
+    // Load settings from SettingsManager
+    if(m_coreContext && m_coreContext->settingsManager) {
+        m_enableFlip = m_coreContext->settingsManager->value(QStringLiteral("AlbumMosaic/EnableFlip")).toBool();
+        m_flipInterval = m_coreContext->settingsManager->value(QStringLiteral("AlbumMosaic/FlipInterval")).toInt();
+        m_columnCount = m_coreContext->settingsManager->value(QStringLiteral("AlbumMosaic/ColumnCount")).toInt();
+    }
+    
     setMouseTracking(true); // Enable mouse tracking for tooltips
     connect(m_flipTimer, &QTimer::timeout, this, &AlbumMosaicWidget::flipAnimation);
-    m_flipTimer->start(3000); // Flip every 3 seconds
+    if(m_enableFlip) {
+        m_flipTimer->start(m_flipInterval);
+    }
     
     loadAlbumMetadata();
     updateMosaic();
@@ -149,7 +160,7 @@ void AlbumMosaicWidget::updateMosaic()
         return;
     }
     
-    const int cols = 10;
+    const int cols = m_columnCount;
     const int cellWidth = width() / cols;
     const int cellHeight = cellWidth; // Square cells
     const int visibleRows = (height() + cellHeight - 1) / cellHeight;
@@ -249,9 +260,14 @@ void AlbumMosaicWidget::mouseMoveEvent(QMouseEvent* event)
     }
     
     // Find which cell is being hovered
+    int oldHoveredIndex = m_hoveredCellIndex;
+    m_hoveredCellIndex = -1;
+    
     for(int i = 0; i < m_coverPositions.size(); ++i) {
         const QRect& cell = m_coverPositions[i];
         if(cell.contains(event->pos())) {
+            m_hoveredCellIndex = i;
+            
             // Get the album at this grid position
             if(i < m_currentGridIndices.size()) {
                 int albumIndex = m_currentGridIndices[i];
@@ -261,18 +277,31 @@ void AlbumMosaicWidget::mouseMoveEvent(QMouseEvent* event)
                     setToolTip(tooltipText);
                 }
             }
-            return;
+            break;
         }
     }
     
+    // Repaint if hover state changed
+    if(oldHoveredIndex != m_hoveredCellIndex) {
+        update();
+    }
+    
     // Clear tooltip if not hovering over any cell
-    setToolTip("");
+    if(m_hoveredCellIndex == -1) {
+        setToolTip("");
+    }
 }
 
 void AlbumMosaicWidget::mousePressEvent(QMouseEvent* event)
 {
+    // Single-click does nothing, only double-click plays
+    Q_UNUSED(event)
+}
+
+void AlbumMosaicWidget::mouseDoubleClickEvent(QMouseEvent* event)
+{
     if(event->button() == Qt::LeftButton) {
-        // Check which cell was clicked
+        // Check which cell was double-clicked
         for(int i = 0; i < m_coverPositions.size(); ++i) {
             if(m_coverPositions[i].contains(event->pos())) {
                 if(i < m_currentGridIndices.size()) {
@@ -321,15 +350,9 @@ void AlbumMosaicWidget::playAlbum(const QString& album, const QString& albumArti
     
     // Use PlayerController to play the album
     if(m_coreContext && m_coreContext->playerController) {
-        // Replace the current tracks with the album tracks
+        // Clear queue and replace tracks
+        m_coreContext->playerController->clearQueue();
         m_coreContext->playerController->replaceTracks(albumTracks);
-        
-        // Change to the first track
-        if(!albumTracks.empty()) {
-            m_coreContext->playerController->changeCurrentTrack(albumTracks[0]);
-        }
-        
-        // Play
         m_coreContext->playerController->play();
     }
 }
@@ -347,6 +370,7 @@ void AlbumMosaicWidget::paintEvent(QPaintEvent* event)
     
     for(int i = 0; i < m_coverPositions.size(); ++i) {
         const QRect& cell = m_coverPositions[i];
+        const bool isHovered = (i == m_hoveredCellIndex);
         
         // Get the album at this grid position
         if(i < m_currentGridIndices.size()) {
@@ -367,13 +391,58 @@ void AlbumMosaicWidget::paintEvent(QPaintEvent* event)
                     // Draw scaled cover centered in cell
                     QRect destRect = scaledCover.rect();
                     destRect.moveCenter(cell.center());
-                    painter.drawPixmap(destRect, scaledCover);
+                    
+                    // Draw hover effect
+                    if(isHovered) {
+                        // Draw shadow
+                        QPainterPath shadowPath;
+                        shadowPath.addRect(destRect);
+                        painter.setPen(QPen(QColor(255, 255, 255, 100), 3));
+                        painter.setBrush(Qt::NoBrush);
+                        painter.drawPath(shadowPath);
+                        
+                        // Slight brightness increase
+                        painter.setOpacity(1.1);
+                        painter.drawPixmap(destRect, scaledCover);
+                        painter.setOpacity(1.0);
+                    } else {
+                        painter.drawPixmap(destRect, scaledCover);
+                    }
+                    
+                    // Draw album name overlay on cover (semi-transparent)
+                    if(isHovered) {
+                        painter.setPen(QColor(255, 255, 255));
+                        QFont font = painter.font();
+                        font.setPixelSize(cell.height() / 10);
+                        font.setBold(true);
+                        painter.setFont(font);
+                        
+                        QString shortName = album.album;
+                        if(shortName.length() > 20) {
+                            shortName = shortName.left(17) + "...";
+                        }
+                        
+                        QRect textRect = destRect;
+                        textRect.setHeight(cell.height() / 5);
+                        textRect.moveBottom(destRect.bottom() - 5);
+                        
+                        // Draw semi-transparent background
+                        painter.fillRect(textRect, QColor(0, 0, 0, 150));
+                        painter.drawText(textRect, Qt::AlignCenter, shortName);
+                    }
                 } else {
                     // Draw attractive placeholder with gradient
                     QLinearGradient gradient(cell.topLeft(), cell.bottomRight());
                     gradient.setColorAt(0, QColor(60, 60, 70));
                     gradient.setColorAt(1, QColor(40, 40, 50));
                     painter.fillRect(cell, gradient);
+                    
+                    // Draw hover effect on placeholder
+                    if(isHovered) {
+                        painter.setPen(QPen(QColor(255, 255, 255, 100), 3));
+                        painter.setBrush(Qt::NoBrush);
+                        painter.drawRect(cell);
+                    }
                     
                     // Draw musical note icon
                     painter.setPen(QColor(200, 200, 200));

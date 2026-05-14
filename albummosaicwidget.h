@@ -61,6 +61,7 @@ protected:
     void mousePressEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;
+    void mouseDoubleClickEvent(QMouseEvent* event) override;
 
 private:
     void loadAlbumMetadata();
@@ -81,4 +82,10 @@ private:
     float m_flipProgress;
     int m_scrollOffset{0}; // Scroll offset for grid
     int m_totalRows{0}; // Total number of rows in grid
+    
+    // Configurable options
+    bool m_enableFlip{true};
+    int m_flipInterval{3000}; // milliseconds
+    int m_columnCount{10};
+    int m_hoveredCellIndex{-1}; // Currently hovered cell
 };
