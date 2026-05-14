@@ -20,4 +20,6 @@ create_fooyin_plugin(
             albummosaicplugin.h
             albummosaicwidget.cpp
             albummosaicwidget.h
+            albummosaicsettingsdialog.cpp
+            albummosaicsettingsdialog.h
 )

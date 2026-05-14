@@ -18,6 +18,7 @@
  */
 
 #include "albummosaicwidget.h"
+#include "albummosaicsettingsdialog.h"
 
 #include <QPainter>
 #include <QMouseEvent>
@@ -34,6 +35,10 @@
 #include <QFileInfo>
 #include <QFile>
 #include <QPainterPath>
+#include <QMenu>
+#include <QContextMenuEvent>
+#include <QMessageBox>
+#include <cmath>
 #include <core/library/musiclibrary.h>
 #include <core/player/playercontroller.h>
 #include <core/track.h>
@@ -217,26 +222,50 @@ void AlbumMosaicWidget::flipAnimation()
     }
     
     // Select random cover position to flip
-    m_currentFlipIndex = QRandomGenerator::global()->bounded(m_coverPositions.size());
-    m_isFlipping = true;
-    m_flipProgress = 0.0f;
-    
-    // Change the album at this position to a random one
-    if(m_currentFlipIndex < m_currentGridIndices.size()) {
+    if(!m_isFlipping) {
+        m_currentFlipIndex = QRandomGenerator::global()->bounded(m_coverPositions.size());
+        m_isFlipping = true;
+        m_flipProgress = 0.0f;
+        m_flipDirection = 1;
+        
+        // Store old album index
+        if(m_currentFlipIndex < m_currentGridIndices.size()) {
+            m_oldAlbumIndex = m_currentGridIndices[m_currentFlipIndex];
+        }
+        
+        // Select new random album (different from old one)
         int newAlbumIndex = QRandomGenerator::global()->bounded(m_albums.size());
-        m_currentGridIndices[m_currentFlipIndex] = newAlbumIndex;
+        while(m_albums.size() > 1 && newAlbumIndex == m_oldAlbumIndex) {
+            newAlbumIndex = QRandomGenerator::global()->bounded(m_albums.size());
+        }
+        m_newAlbumIndex = newAlbumIndex;
+        
+        // Update the grid index to new album
+        if(m_currentFlipIndex < m_currentGridIndices.size()) {
+            m_currentGridIndices[m_currentFlipIndex] = newAlbumIndex;
+        }
     }
     
-    // Animate flip (simplified - would need proper animation framework for smooth flip)
-    QTimer::singleShot(100, this, [this]() {
-        m_flipProgress = 0.5f;
-        update();
-    });
+    // Animate flip progress (smooth sine wave for realistic motion)
+    m_flipProgress += 0.05f;
     
-    QTimer::singleShot(200, this, [this]() {
+    // Flip direction changes at 50% progress
+    if(m_flipProgress >= 0.5f && m_flipDirection == 1) {
+        m_flipDirection = -1;
+    }
+    
+    // Animation complete when progress reaches 1.0
+    if(m_flipProgress >= 1.0f) {
         m_isFlipping = false;
-        update();
-    });
+        m_flipProgress = 0.0f;
+    }
+    
+    update();
+    
+    // Continue animation
+    if(m_isFlipping) {
+        QTimer::singleShot(16, this, &AlbumMosaicWidget::flipAnimation); // ~60fps
+    }
 }
 
 void AlbumMosaicWidget::wheelEvent(QWheelEvent* event)
@@ -317,6 +346,134 @@ void AlbumMosaicWidget::mouseDoubleClickEvent(QMouseEvent* event)
     }
 }
 
+void AlbumMosaicWidget::contextMenuEvent(QContextMenuEvent* event)
+{
+    // Find which cell was right-clicked
+    m_rightClickedCellIndex = -1;
+    for(int i = 0; i < m_coverPositions.size(); ++i) {
+        if(m_coverPositions[i].contains(event->pos())) {
+            m_rightClickedCellIndex = i;
+            break;
+        }
+    }
+    
+    QMenu menu(this);
+    
+    if(m_rightClickedCellIndex != -1 && m_rightClickedCellIndex < m_currentGridIndices.size()) {
+        int albumIndex = m_currentGridIndices[m_rightClickedCellIndex];
+        if(albumIndex < m_albums.size()) {
+            const AlbumInfo& album = m_albums[albumIndex];
+            
+            QAction* playAction = menu.addAction(tr("Play Album"));
+            QAction* queueAction = menu.addAction(tr("Queue Album"));
+            menu.addSeparator();
+            QAction* infoAction = menu.addAction(tr("Album Info"));
+            menu.addSeparator();
+            QAction* settingsAction = menu.addAction(tr("Settings"));
+            
+            QAction* selectedAction = menu.exec(event->globalPos());
+            
+            if(selectedAction == playAction) {
+                playAlbum(album.album, album.albumArtist);
+            }
+            else if(selectedAction == queueAction) {
+                queueAlbum(album.album, album.albumArtist);
+            }
+            else if(selectedAction == infoAction) {
+                showAlbumInfo(album);
+            }
+            else if(selectedAction == settingsAction) {
+                showSettingsDialog();
+            }
+            return;
+        }
+    }
+    
+    // If no album was clicked, show general settings
+    QAction* settingsAction = menu.addAction(tr("Settings"));
+    QAction* selectedAction = menu.exec(event->globalPos());
+    
+    if(selectedAction == settingsAction) {
+        showSettingsDialog();
+    }
+}
+
+void AlbumMosaicWidget::queueAlbum(const QString& album, const QString& albumArtist)
+{
+    if(!m_coreContext || !m_coreContext->library) {
+        qDebug() << "MusicLibrary not available for queuing";
+        return;
+    }
+    
+    // Get all tracks for this album from MusicLibrary
+    Fooyin::TrackList tracks = m_coreContext->library->tracks();
+    Fooyin::TrackList albumTracks;
+    
+    for(const Fooyin::Track& track : tracks) {
+        if(track.album() == album && track.albumArtist() == albumArtist) {
+            if(track.isValid()) {
+                albumTracks.push_back(track);
+            }
+        }
+    }
+    
+    if(albumTracks.empty()) {
+        qDebug() << "No tracks found for album:" << album << "by" << albumArtist;
+        return;
+    }
+    
+    // Sort by track number
+    std::sort(albumTracks.begin(), albumTracks.end(), [](const Fooyin::Track& a, const Fooyin::Track& b) {
+        return a.trackNumber() < b.trackNumber();
+    });
+    
+    qDebug() << "Queuing album:" << album << "by" << albumArtist << "with" << albumTracks.size() << "tracks";
+    
+    // Use PlayerController to queue the album
+    if(m_coreContext && m_coreContext->playerController) {
+        m_coreContext->playerController->queueTracks(albumTracks);
+    }
+}
+
+void AlbumMosaicWidget::showAlbumInfo(const AlbumInfo& album)
+{
+    QString info = tr("Album: %1\nArtist: %2\nPath: %3").arg(album.album, album.albumArtist, album.filePath);
+    QMessageBox::information(this, tr("Album Information"), info);
+}
+
+void AlbumMosaicWidget::showSettingsDialog()
+{
+    if(!m_coreContext || !m_coreContext->settingsManager) {
+        return;
+    }
+    
+    AlbumMosaicSettingsDialog dialog(m_coreContext->settingsManager, this);
+    dialog.exec();
+    
+    // Reload settings after dialog closes
+    loadSettings();
+}
+
+void AlbumMosaicWidget::loadSettings()
+{
+    if(m_coreContext && m_coreContext->settingsManager) {
+        m_enableFlip = m_coreContext->settingsManager->value(QStringLiteral("AlbumMosaic/EnableFlip")).toBool();
+        m_flipInterval = m_coreContext->settingsManager->value(QStringLiteral("AlbumMosaic/FlipInterval")).toInt();
+        m_columnCount = m_coreContext->settingsManager->value(QStringLiteral("AlbumMosaic/ColumnCount")).toInt();
+        
+        // Restart flip timer with new settings
+        if(m_enableFlip) {
+            m_flipTimer->start(m_flipInterval);
+        } else {
+            m_flipTimer->stop();
+        }
+        
+        // Update mosaic with new column count
+        updateMosaic();
+        update();
+    }
+}
+
 void AlbumMosaicWidget::playAlbum(const QString& album, const QString& albumArtist)
 {
     if(!m_coreContext || !m_coreContext->library) {
@@ -371,6 +528,7 @@ void AlbumMosaicWidget::paintEvent(QPaintEvent* event)
     for(int i = 0; i < m_coverPositions.size(); ++i) {
         const QRect& cell = m_coverPositions[i];
         const bool isHovered = (i == m_hoveredCellIndex);
+        const bool isFlipping = (m_isFlipping && i == m_currentFlipIndex);
         
         // Get the album at this grid position
         if(i < m_currentGridIndices.size()) {
@@ -392,21 +550,69 @@ void AlbumMosaicWidget::paintEvent(QPaintEvent* event)
                     QRect destRect = scaledCover.rect();
                     destRect.moveCenter(cell.center());
                     
-                    // Draw hover effect
-                    if(isHovered) {
-                        // Draw shadow
-                        QPainterPath shadowPath;
-                        shadowPath.addRect(destRect);
-                        painter.setPen(QPen(QColor(255, 255, 255, 100), 3));
-                        painter.setBrush(Qt::NoBrush);
-                        painter.drawPath(shadowPath);
+                    // Apply 3D flip transformation if flipping
+                    if(isFlipping) {
+                        painter.save();
                         
-                        // Slight brightness increase
-                        painter.setOpacity(1.1);
+                        // Calculate flip angle (0 to 180 degrees)
+                        float angle = m_flipProgress * 180.0f;
+                        
+                        // Calculate scale based on angle (cosine for 3D perspective)
+                        float scale = std::cos(angle * M_PI / 180.0f);
+                        if(scale < 0) scale = -scale; // Always positive scale
+                        
+                        // Determine which album to show based on flip direction
+                        int albumToShow = (m_flipProgress < 0.5f) ? m_oldAlbumIndex : m_newAlbumIndex;
+                        if(albumToShow >= 0 && albumToShow < m_albums.size()) {
+                            const AlbumInfo& flipAlbum = m_albums[albumToShow];
+                            QPixmap flipCover;
+                            if(m_coverProvider && flipAlbum.track.isValid()) {
+                                flipCover = m_coverProvider->trackCoverThumbnail(flipAlbum.track, Fooyin::CoverProvider::VeryLarge);
+                            }
+                            if(!flipCover.isNull()) {
+                                scaledCover = flipCover.scaled(cell.size(), Qt::KeepAspectRatio, Qt::SmoothTransformation);
+                                destRect = scaledCover.rect();
+                                destRect.moveCenter(cell.center());
+                            }
+                        }
+                        
+                        // Apply transformation
+                        painter.translate(destRect.center());
+                        painter.scale(scale, 1.0f);
+                        painter.translate(-destRect.center());
+                        
+                        // Draw hover effect
+                        if(isHovered) {
+                            QPainterPath shadowPath;
+                            shadowPath.addRect(destRect);
+                            painter.setPen(QPen(QColor(255, 255, 255, 100), 3));
+                            painter.setBrush(Qt::NoBrush);
+                            painter.drawPath(shadowPath);
+                            
+                            // Slight brightness increase
+                            painter.setOpacity(1.1);
+                        }
+                        
                         painter.drawPixmap(destRect, scaledCover);
                         painter.setOpacity(1.0);
+                        
+                        painter.restore();
                     } else {
-                        painter.drawPixmap(destRect, scaledCover);
+                        // Draw hover effect
+                        if(isHovered) {
+                            QPainterPath shadowPath;
+                            shadowPath.addRect(destRect);
+                            painter.setPen(QPen(QColor(255, 255, 255, 100), 3));
+                            painter.setBrush(Qt::NoBrush);
+                            painter.drawPath(shadowPath);
+                            
+                            // Slight brightness increase
+                            painter.setOpacity(1.1);
+                            painter.drawPixmap(destRect, scaledCover);
+                            painter.setOpacity(1.0);
+                        } else {
+                            painter.drawPixmap(destRect, scaledCover);
+                        }
                     }
                     
                     // Draw album name overlay on cover (semi-transparent)

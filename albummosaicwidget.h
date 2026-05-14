@@ -62,6 +62,7 @@ protected:
     void mouseMoveEvent(QMouseEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;
     void mouseDoubleClickEvent(QMouseEvent* event) override;
+    void contextMenuEvent(QContextMenuEvent* event) override;
 
 private:
     void loadAlbumMetadata();
@@ -69,6 +70,10 @@ private:
     void flipAnimation();
     void randomizeGrid();
     void playAlbum(const QString& album, const QString& albumArtist);
+    void queueAlbum(const QString& album, const QString& albumArtist);
+    void showAlbumInfo(const AlbumInfo& album);
+    void showSettingsDialog();
+    void loadSettings();
 
     Fooyin::GuiPluginContext* m_guiContext;
     Fooyin::CorePluginContext* m_coreContext;
@@ -80,6 +85,9 @@ private:
     int m_currentFlipIndex;
     bool m_isFlipping;
     float m_flipProgress;
+    int m_flipDirection{1}; // 1 or -1 for flip direction
+    int m_oldAlbumIndex{-1}; // Album being flipped away
+    int m_newAlbumIndex{-1}; // Album being flipped in
     int m_scrollOffset{0}; // Scroll offset for grid
     int m_totalRows{0}; // Total number of rows in grid
     
@@ -88,4 +96,5 @@ private:
     int m_flipInterval{3000}; // milliseconds
     int m_columnCount{10};
     int m_hoveredCellIndex{-1}; // Currently hovered cell
+    int m_rightClickedCellIndex{-1}; // Currently right-clicked cell
 };
