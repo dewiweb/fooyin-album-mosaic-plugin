@@ -67,6 +67,7 @@ protected:
     void resizeEvent(QResizeEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
+    void leaveEvent(QEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;
     void mouseDoubleClickEvent(QMouseEvent* event) override;
     void contextMenuEvent(QContextMenuEvent* event) override;
@@ -114,6 +115,7 @@ private:
     int m_lastSwappedCellB{-1};
     static constexpr int FADE_STEPS = 8; // Fade-in over 8 frames (~160ms at 20fps)
     QTimer* m_fadeTimer{nullptr}; // Fade-in animation timer
+    QTimer* m_toolTipTimer{nullptr}; // Delay before hiding tooltip
     void invalidateScaledCache();
     QPixmap getCoverForPaint(int albumIndex, const QSize& cellSize, const Fooyin::ThumbnailSize& coverSize);
     void updateVisibleThumbnailKeys();

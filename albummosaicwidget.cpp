@@ -116,6 +116,14 @@ AlbumMosaicWidget::AlbumMosaicWidget(Fooyin::GuiPluginContext* guiContext, Fooyi
     m_fadeTimer->setInterval(50);
     connect(m_fadeTimer, &QTimer::timeout, this, &AlbumMosaicWidget::advanceFade);
 
+    // Tooltip hide timer — delays hiding the tooltip for a smoother feel
+    m_toolTipTimer = new QTimer(this);
+    m_toolTipTimer->setSingleShot(true);
+    m_toolTipTimer->setInterval(500);
+    connect(m_toolTipTimer, &QTimer::timeout, this, [this]() {
+        if(m_toolTip) m_toolTip->hide();
+    });
+
     // Fooyin styled ToolTip — top-level so it's not clipped by widget bounds
     m_toolTip = new Fooyin::ToolTip(nullptr);
     m_toolTip->setWindowFlags(Qt::ToolTip | Qt::FramelessWindowHint);
@@ -657,6 +665,7 @@ void AlbumMosaicWidget::mouseMoveEvent(QMouseEvent* event)
                     const AlbumInfo& album = m_albums[albumIndex];
                     // Use Fooyin's styled ToolTip: title = album, subtext = artist
                     if(m_toolTip) {
+                        m_toolTipTimer->stop(); // Cancel any pending hide
                         m_toolTip->setContent(album.album, album.albumArtist);
                         // AlignLeft positions the tooltip above the cursor (y - height)
                         m_toolTip->setPosition(event->globalPosition().toPoint(), Qt::AlignLeft);
@@ -673,8 +682,18 @@ void AlbumMosaicWidget::mouseMoveEvent(QMouseEvent* event)
     }
 
     if(m_hoveredCellIndex == -1 && m_toolTip) {
-        m_toolTip->hide();
+        m_toolTipTimer->start(); // Delay hiding the tooltip
     }
+}
+
+void AlbumMosaicWidget::leaveEvent(QEvent* event)
+{
+    Q_UNUSED(event)
+    m_hoveredCellIndex = -1;
+    if(m_toolTip) {
+        m_toolTipTimer->start(); // Delay hiding the tooltip
+    }
+    update();
 }
 
 void AlbumMosaicWidget::mousePressEvent(QMouseEvent* event)
