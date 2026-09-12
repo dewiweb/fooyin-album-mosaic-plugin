@@ -8,7 +8,7 @@ on:
 jobs:
   # ─── Linux ──────────────────────────────────────────────────────────────
   build-linux:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
@@ -20,14 +20,14 @@ jobs:
             libasound2-dev libtag1-dev libicu-dev libpipewire-0.3-dev libpulse-dev \
             qt6-base-dev libqt6sql6-sqlite libqt6svg6-dev qt6-tools-dev qt6-tools-dev-tools qt6-l10n-tools \
             libavcodec-dev libavformat-dev libavutil-dev libavdevice-dev libswresample-dev \
-            libsndfile1-dev libarchive-dev
+            libsndfile1-dev libarchive-dev patchelf
 
       - name: Cache Fooyin build
         id: cache-fooyin
         uses: actions/cache@v4
         with:
           path: ~/fooyin-dev
-          key: fooyin-0.12.6-linux-${{ runner.os }}
+          key: fooyin-0.12.6-ubuntu2404-${{ runner.os }}
 
       - name: Clone and build Fooyin
         if: steps.cache-fooyin.outputs.cache-hit != 'true'
@@ -62,7 +62,7 @@ jobs:
 
   # ─── Flatpak ────────────────────────────────────────────────────────────
   build-flatpak:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
