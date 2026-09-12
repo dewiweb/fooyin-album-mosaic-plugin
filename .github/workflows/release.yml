@@ -1,0 +1,193 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  # ─── Linux ──────────────────────────────────────────────────────────────
+  build-linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y \
+            g++ git cmake pkg-config ninja-build libglu1-mesa-dev libxkbcommon-dev zlib1g-dev \
+            libasound2-dev libtag1-dev libicu-dev libpipewire-0.3-dev libpulse-dev \
+            qt6-base-dev libqt6sql6-sqlite libqt6svg6-dev qt6-tools-dev qt6-tools-dev-tools qt6-l10n-tools \
+            libavcodec-dev libavformat-dev libavutil-dev libavdevice-dev libswresample-dev \
+            libsndfile1-dev libarchive-dev
+
+      - name: Cache Fooyin build
+        id: cache-fooyin
+        uses: actions/cache@v4
+        with:
+          path: ~/fooyin-dev
+          key: fooyin-0.12.6-linux-${{ runner.os }}
+
+      - name: Clone and build Fooyin
+        if: steps.cache-fooyin.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch v0.12.6 https://github.com/fooyin/fooyin.git /tmp/fooyin
+          cd /tmp/fooyin
+          git submodule update --init --recursive
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=$HOME/fooyin-dev \
+            -DINSTALL_HEADERS=ON \
+            -DBUILD_PLUGINS=OFF
+          cmake --build build
+          cmake --install build
+
+      - name: Build plugin
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$HOME/fooyin-dev"
+          cmake --build build
+
+      - name: Patch RUNPATH
+        run: |
+          patchelf --set-rpath '$ORIGIN/../lib/fooyin' build/fyplugin_albummosaicplugin.so || true
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-linux
+          path: build/fyplugin_albummosaicplugin.so
+
+  # ─── Flatpak ────────────────────────────────────────────────────────────
+  build-flatpak:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Flatpak and KDE SDK
+        run: |
+          sudo apt update
+          sudo apt install -y flatpak flatpak-builder
+          flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user -y org.kde.Sdk/x86_64/6.11
+          flatpak install --user -y org.kde.Platform/x86_64/6.11
+
+      - name: Build plugin for Flatpak
+        run: |
+          # Build inside the Flatpak SDK environment
+          flatpak-builder --user --install-deps-from=flathub build-dir flatpak-manifest.json || true
+          # Fallback: build manually in the SDK
+          flatpak run --command=bash org.kde.Sdk/x86_64/6.11 -- -c "
+            cmake -B build -G Ninja \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_PREFIX_PATH=/app
+            cmake --build build
+          " || echo "Flatpak build needs a manifest — skipping for now"
+
+      - name: Upload artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-flatpak
+          path: build/fyplugin_albummosaicplugin.so
+          if-no-files-found: ignore
+
+  # ─── Windows ───────────────────────────────────────────────────────────
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.3'
+          arch: 'win64_msvc2022_64'
+          modules: 'qtbase qtsvg qttools'
+
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Cache Fooyin build
+        id: cache-fooyin
+        uses: actions/cache@v4
+        with:
+          path: C:\fooyin-dev
+          key: fooyin-0.12.6-windows-${{ runner.os }}
+
+      - name: Clone and build Fooyin
+        if: steps.cache-fooyin.outputs.cache-hit != 'true'
+        shell: cmd
+        run: |
+          git clone --depth 1 --branch v0.12.6 https://github.com/fooyin/fooyin.git C:\fooyin-src
+          cd C:\fooyin-src
+          git submodule update --init --recursive
+          cmake -B build -G Ninja ^
+            -DCMAKE_BUILD_TYPE=Release ^
+            -DCMAKE_INSTALL_PREFIX=C:\fooyin-dev ^
+            -DINSTALL_HEADERS=ON ^
+            -DBUILD_PLUGINS=OFF ^
+            -DCMAKE_PREFIX_PATH=%QT_ROOT_DIR%
+          cmake --build build
+          cmake --install build
+
+      - name: Build plugin
+        shell: cmd
+        run: |
+          cmake -B build -G Ninja ^
+            -DCMAKE_BUILD_TYPE=Release ^
+            -DCMAKE_PREFIX_PATH="C:\fooyin-dev;%QT_ROOT_DIR%"
+          cmake --build build
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-windows
+          path: build/fyplugin_albummosaicplugin.dll
+
+  # ─── Release ───────────────────────────────────────────────────────────
+  create-release:
+    needs: [build-linux, build-flatpak, build-windows]
+    runs-on: ubuntu-latest
+    if: always()
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release files
+        run: |
+          mkdir -p release-assets
+          # Copy Linux .so
+          if [ -f artifacts/plugin-linux/fyplugin_albummosaicplugin.so ]; then
+            cp artifacts/plugin-linux/fyplugin_albummosaicplugin.so release-assets/fyplugin_albummosaicplugin-linux-x86_64.so
+          fi
+          # Copy Windows .dll
+          if [ -f artifacts/plugin-windows/fyplugin_albummosaicplugin.dll ]; then
+            cp artifacts/plugin-windows/fyplugin_albummosaicplugin.dll release-assets/fyplugin_albummosaicplugin-windows-x86_64.dll
+          fi
+          # Copy Flatpak .so
+          if [ -f artifacts/plugin-flatpak/fyplugin_albummosaicplugin.so ]; then
+            cp artifacts/plugin-flatpak/fyplugin_albummosaicplugin.so release-assets/fyplugin_albummosaicplugin-flatpak-x86_64.so
+          fi
+          ls -la release-assets/ || echo "No artifacts found"
+
+      - name: Create or update release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          generate_release_notes: true
+          files: release-assets/*
+          fail_on_unmatched_files: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

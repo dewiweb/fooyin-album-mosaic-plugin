@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y \
+            g++ git cmake pkg-config ninja-build libglu1-mesa-dev libxkbcommon-dev zlib1g-dev \
+            libasound2-dev libtag1-dev libicu-dev libpipewire-0.3-dev libpulse-dev \
+            qt6-base-dev libqt6sql6-sqlite libqt6svg6-dev qt6-tools-dev qt6-tools-dev-tools qt6-l10n-tools \
+            libavcodec-dev libavformat-dev libavutil-dev libavdevice-dev libswresample-dev \
+            libsndfile1-dev libarchive-dev
+
+      - name: Cache Fooyin build
+        id: cache-fooyin
+        uses: actions/cache@v4
+        with:
+          path: ~/fooyin-dev
+          key: fooyin-0.12.6-linux-${{ runner.os }}
+
+      - name: Clone and build Fooyin
+        if: steps.cache-fooyin.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch v0.12.6 https://github.com/fooyin/fooyin.git /tmp/fooyin
+          cd /tmp/fooyin
+          git submodule update --init --recursive
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=$HOME/fooyin-dev \
+            -DINSTALL_HEADERS=ON \
+            -DBUILD_PLUGINS=OFF
+          cmake --build build
+          cmake --install build
+
+      - name: Build plugin
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$HOME/fooyin-dev"
+          cmake --build build
+
+      - name: Verify plugin
+        run: |
+          file build/fyplugin_albummosaicplugin.so
+          test -f build/fyplugin_albummosaicplugin.so && echo "Plugin built successfully"
