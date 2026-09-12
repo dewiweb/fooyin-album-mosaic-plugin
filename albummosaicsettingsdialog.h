@@ -24,6 +24,7 @@
 #include <QSpinBox>
 #include <QComboBox>
 #include <QLineEdit>
+#include <QPushButton>
 
 class QVBoxLayout;
 
@@ -48,12 +49,18 @@ private:
     void loadSettings();
     void saveSettings();
     void populateFiltersFromLibrary();
+    void updateBgColorButton();
 
     Fooyin::SettingsManager* m_settingsManager;
     Fooyin::MusicLibrary* m_library;
-    QCheckBox* m_enableFlipCheckbox;
-    QSpinBox* m_flipIntervalSpinBox;
+    QCheckBox* m_enableAnimCheckbox;
+    QSpinBox* m_animIntervalSpinBox;
     QSpinBox* m_columnCountSpinBox;
     QComboBox* m_genreComboBox;
     QComboBox* m_artistComboBox;
+    QComboBox* m_animTypeComboBox;
+    QComboBox* m_animSpeedComboBox;
+    QComboBox* m_animScopeComboBox;
+    QPushButton* m_bgColorButton;
+    QColor m_bgColor;
 };

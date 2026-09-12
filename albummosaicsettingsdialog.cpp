@@ -29,77 +29,127 @@
 #include <QGroupBox>
 #include <QComboBox>
 #include <QLineEdit>
+#include <QColorDialog>
 
 AlbumMosaicSettingsDialog::AlbumMosaicSettingsDialog(Fooyin::SettingsManager* settingsManager, Fooyin::MusicLibrary* library, QWidget* parent)
     : QDialog{parent}
     , m_settingsManager{settingsManager}
     , m_library{library}
-    , m_enableFlipCheckbox{new QCheckBox(tr("Enable Flip Animation"), this)}
-    , m_flipIntervalSpinBox{new QSpinBox(this)}
+    , m_enableAnimCheckbox{new QCheckBox(tr("Enable Animation"), this)}
+    , m_animIntervalSpinBox{new QSpinBox(this)}
     , m_columnCountSpinBox{new QSpinBox(this)}
     , m_genreComboBox{new QComboBox(this)}
     , m_artistComboBox{new QComboBox(this)}
+    , m_animTypeComboBox{new QComboBox(this)}
+    , m_animSpeedComboBox{new QComboBox(this)}
+    , m_animScopeComboBox{new QComboBox(this)}
+    , m_bgColorButton{new QPushButton(this)}
+    , m_bgColor{Qt::black}
 {
     setWindowTitle(tr("Album Mosaic Settings"));
-    
+
     auto* mainLayout = new QVBoxLayout(this);
     mainLayout->setContentsMargins(10, 10, 10, 10);
     mainLayout->setSpacing(10);
-    
-    // Flip settings group
-    auto* flipGroup = new QGroupBox(tr("Flip Animation"), this);
-    auto* flipLayout = new QVBoxLayout(flipGroup);
-    
-    flipLayout->addWidget(m_enableFlipCheckbox);
-    
+
+    // Animation settings group
+    auto* animGroup = new QGroupBox(tr("Animation"), this);
+    auto* animLayout = new QVBoxLayout(animGroup);
+
+    animLayout->addWidget(m_enableAnimCheckbox);
+
     auto* intervalLayout = new QHBoxLayout();
-    intervalLayout->addWidget(new QLabel(tr("Flip Interval (ms):"), this));
-    m_flipIntervalSpinBox->setRange(1000, 30000);
-    m_flipIntervalSpinBox->setSingleStep(1000);
-    intervalLayout->addWidget(m_flipIntervalSpinBox);
-    flipLayout->addLayout(intervalLayout);
-    
-    mainLayout->addWidget(flipGroup);
-    
+    intervalLayout->addWidget(new QLabel(tr("Animation Interval (ms):"), this));
+    m_animIntervalSpinBox->setRange(1000, 30000);
+    m_animIntervalSpinBox->setSingleStep(1000);
+    intervalLayout->addWidget(m_animIntervalSpinBox);
+    animLayout->addLayout(intervalLayout);
+
+    auto* animTypeLayout = new QHBoxLayout();
+    animTypeLayout->addWidget(new QLabel(tr("Animation Type:"), this));
+    m_animTypeComboBox->addItem(tr("3D Flip"), QStringLiteral("Flip3D"));
+    m_animTypeComboBox->addItem(tr("Crossfade"), QStringLiteral("Crossfade"));
+    m_animTypeComboBox->addItem(tr("Slide"), QStringLiteral("Slide"));
+    m_animTypeComboBox->addItem(tr("Zoom"), QStringLiteral("Zoom"));
+    m_animTypeComboBox->addItem(tr("Page Curl"), QStringLiteral("PageCurl"));
+    m_animTypeComboBox->addItem(tr("Random"), QStringLiteral("Random"));
+    animTypeLayout->addWidget(m_animTypeComboBox);
+    animLayout->addLayout(animTypeLayout);
+
+    auto* animSpeedLayout = new QHBoxLayout();
+    animSpeedLayout->addWidget(new QLabel(tr("Animation Speed:"), this));
+    m_animSpeedComboBox->addItem(tr("Fast"), QStringLiteral("Fast"));
+    m_animSpeedComboBox->addItem(tr("Medium"), QStringLiteral("Medium"));
+    m_animSpeedComboBox->addItem(tr("Slow"), QStringLiteral("Slow"));
+    animSpeedLayout->addWidget(m_animSpeedComboBox);
+    animLayout->addLayout(animSpeedLayout);
+
+    auto* animScopeLayout = new QHBoxLayout();
+    animScopeLayout->addWidget(new QLabel(tr("Animation Scope:"), this));
+    m_animScopeComboBox->addItem(tr("Single Cell"), QStringLiteral("Single"));
+    m_animScopeComboBox->addItem(tr("Multiple Cells"), QStringLiteral("Multiple"));
+    m_animScopeComboBox->addItem(tr("Wave"), QStringLiteral("Wave"));
+    animScopeLayout->addWidget(m_animScopeComboBox);
+    animLayout->addLayout(animScopeLayout);
+
+    mainLayout->addWidget(animGroup);
+
     // Grid settings group
     auto* gridGroup = new QGroupBox(tr("Grid Layout"), this);
     auto* gridLayout = new QVBoxLayout(gridGroup);
-    
+
     auto* columnLayout = new QHBoxLayout();
     columnLayout->addWidget(new QLabel(tr("Number of Columns:"), this));
     m_columnCountSpinBox->setRange(1, 20);
     columnLayout->addWidget(m_columnCountSpinBox);
     gridLayout->addLayout(columnLayout);
-    
+
     mainLayout->addWidget(gridGroup);
-    
+
+    // Background color group
+    auto* bgGroup = new QGroupBox(tr("Background"), this);
+    auto* bgLayout = new QHBoxLayout(bgGroup);
+    bgLayout->addWidget(new QLabel(tr("Grid Background Color:"), this));
+    m_bgColorButton->setMinimumWidth(80);
+    bgLayout->addWidget(m_bgColorButton);
+    bgLayout->addStretch();
+    mainLayout->addWidget(bgGroup);
+
+    connect(m_bgColorButton, &QPushButton::clicked, this, [this]() {
+        const QColor chosen = QColorDialog::getColor(m_bgColor, this, tr("Choose Background Color"));
+        if(chosen.isValid()) {
+            m_bgColor = chosen;
+            updateBgColorButton();
+        }
+    });
+
     // Filter settings group
     auto* filterGroup = new QGroupBox(tr("Filter"), this);
     auto* filterLayout = new QVBoxLayout(filterGroup);
-    
+
     auto* genreLayout = new QHBoxLayout();
     genreLayout->addWidget(new QLabel(tr("Filter by Genre:"), this));
     m_genreComboBox->addItem(tr("All Genres"), QString());
-    m_genreComboBox->setEditable(true); // Allow custom genre entry
+    m_genreComboBox->setEditable(true);
     genreLayout->addWidget(m_genreComboBox);
     filterLayout->addLayout(genreLayout);
-    
+
     auto* artistLayout = new QHBoxLayout();
     artistLayout->addWidget(new QLabel(tr("Filter by Artist:"), this));
     m_artistComboBox->addItem(tr("All Artists"), QString());
-    m_artistComboBox->setEditable(true); // Allow custom artist entry
+    m_artistComboBox->setEditable(true);
     artistLayout->addWidget(m_artistComboBox);
     filterLayout->addLayout(artistLayout);
-    
+
     mainLayout->addWidget(filterGroup);
-    
+
     // Populate filters from library data
     populateFiltersFromLibrary();
-    
+
     // Button box
     auto* buttonBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel | QDialogButtonBox::RestoreDefaults, this);
     mainLayout->addWidget(buttonBox);
-    
+
     connect(buttonBox, &QDialogButtonBox::accepted, this, &AlbumMosaicSettingsDialog::applySettings);
     connect(buttonBox, &QDialogButtonBox::rejected, this, &QDialog::reject);
     connect(buttonBox, &QDialogButtonBox::clicked, this, [this, buttonBox](QAbstractButton* button) {
@@ -107,22 +157,31 @@ AlbumMosaicSettingsDialog::AlbumMosaicSettingsDialog(Fooyin::SettingsManager* se
             restoreDefaults();
         }
     });
-    
+
     loadSettings();
 }
 
 AlbumMosaicSettingsDialog::~AlbumMosaicSettingsDialog() = default;
+
+void AlbumMosaicSettingsDialog::updateBgColorButton()
+{
+    // Show the color as the button's background, with hex code as text
+    m_bgColorButton->setText(m_bgColor.name());
+    m_bgColorButton->setStyleSheet(QStringLiteral("background-color: %1; color: %2;")
+        .arg(m_bgColor.name())
+        .arg(m_bgColor.lightness() > 128 ? "black" : "white"));
+}
 
 void AlbumMosaicSettingsDialog::populateFiltersFromLibrary()
 {
     if(!m_library) {
         return;
     }
-    
+
     Fooyin::TrackList tracks = m_library->tracks();
     QSet<QString> genres;
     QSet<QString> artists;
-    
+
     for(const Fooyin::Track& track : tracks) {
         if(track.hasGenres()) {
             for(const QString& genre : track.genres()) {
@@ -136,8 +195,7 @@ void AlbumMosaicSettingsDialog::populateFiltersFromLibrary()
             artists.insert(track.artist());
         }
     }
-    
-    // Populate genre combo box
+
     QStringList genreList = genres.values();
     std::sort(genreList.begin(), genreList.end(), [](const QString& a, const QString& b) {
         return a.compare(b, Qt::CaseInsensitive) < 0;
@@ -147,8 +205,7 @@ void AlbumMosaicSettingsDialog::populateFiltersFromLibrary()
             m_genreComboBox->addItem(genre, genre);
         }
     }
-    
-    // Populate artist combo box
+
     QStringList artistList = artists.values();
     std::sort(artistList.begin(), artistList.end(), [](const QString& a, const QString& b) {
         return a.compare(b, Qt::CaseInsensitive) < 0;
@@ -165,11 +222,11 @@ void AlbumMosaicSettingsDialog::loadSettings()
     if(!m_settingsManager) {
         return;
     }
-    
-    m_enableFlipCheckbox->setChecked(m_settingsManager->value(QStringLiteral("AlbumMosaic/EnableFlip")).toBool());
-    m_flipIntervalSpinBox->setValue(m_settingsManager->value(QStringLiteral("AlbumMosaic/FlipInterval")).toInt());
+
+    m_enableAnimCheckbox->setChecked(m_settingsManager->value(QStringLiteral("AlbumMosaic/EnableAnim")).toBool());
+    m_animIntervalSpinBox->setValue(m_settingsManager->value(QStringLiteral("AlbumMosaic/AnimInterval")).toInt());
     m_columnCountSpinBox->setValue(m_settingsManager->value(QStringLiteral("AlbumMosaic/ColumnCount")).toInt());
-    
+
     QString genreFilter = m_settingsManager->value(QStringLiteral("AlbumMosaic/GenreFilter")).toString();
     int index = m_genreComboBox->findData(genreFilter);
     if(index >= 0) {
@@ -178,7 +235,7 @@ void AlbumMosaicSettingsDialog::loadSettings()
         m_genreComboBox->addItem(genreFilter, genreFilter);
         m_genreComboBox->setCurrentIndex(m_genreComboBox->count() - 1);
     }
-    
+
     QString artistFilter = m_settingsManager->value(QStringLiteral("AlbumMosaic/ArtistFilter")).toString();
     index = m_artistComboBox->findData(artistFilter);
     if(index >= 0) {
@@ -187,6 +244,28 @@ void AlbumMosaicSettingsDialog::loadSettings()
         m_artistComboBox->addItem(artistFilter, artistFilter);
         m_artistComboBox->setCurrentIndex(m_artistComboBox->count() - 1);
     }
+
+    QString animType = m_settingsManager->value(QStringLiteral("AlbumMosaic/AnimType")).toString();
+    index = m_animTypeComboBox->findData(animType);
+    if(index >= 0) {
+        m_animTypeComboBox->setCurrentIndex(index);
+    }
+
+    QString animSpeed = m_settingsManager->value(QStringLiteral("AlbumMosaic/AnimSpeed")).toString();
+    index = m_animSpeedComboBox->findData(animSpeed);
+    if(index >= 0) {
+        m_animSpeedComboBox->setCurrentIndex(index);
+    }
+
+    QString animScope = m_settingsManager->value(QStringLiteral("AlbumMosaic/AnimScope")).toString();
+    index = m_animScopeComboBox->findData(animScope);
+    if(index >= 0) {
+        m_animScopeComboBox->setCurrentIndex(index);
+    }
+
+    m_bgColor = QColor(m_settingsManager->value(QStringLiteral("AlbumMosaic/BgColor")).toString());
+    if(!m_bgColor.isValid()) m_bgColor = Qt::black;
+    updateBgColorButton();
 }
 
 void AlbumMosaicSettingsDialog::saveSettings()
@@ -194,13 +273,17 @@ void AlbumMosaicSettingsDialog::saveSettings()
     if(!m_settingsManager) {
         return;
     }
-    
-    m_settingsManager->set(QStringLiteral("AlbumMosaic/EnableFlip"), m_enableFlipCheckbox->isChecked());
-    m_settingsManager->set(QStringLiteral("AlbumMosaic/FlipInterval"), m_flipIntervalSpinBox->value());
+
+    m_settingsManager->set(QStringLiteral("AlbumMosaic/EnableAnim"), m_enableAnimCheckbox->isChecked());
+    m_settingsManager->set(QStringLiteral("AlbumMosaic/AnimInterval"), m_animIntervalSpinBox->value());
     m_settingsManager->set(QStringLiteral("AlbumMosaic/ColumnCount"), m_columnCountSpinBox->value());
     m_settingsManager->set(QStringLiteral("AlbumMosaic/GenreFilter"), m_genreComboBox->currentData().toString());
     m_settingsManager->set(QStringLiteral("AlbumMosaic/ArtistFilter"), m_artistComboBox->currentData().toString());
-    
+    m_settingsManager->set(QStringLiteral("AlbumMosaic/AnimType"), m_animTypeComboBox->currentData().toString());
+    m_settingsManager->set(QStringLiteral("AlbumMosaic/AnimSpeed"), m_animSpeedComboBox->currentData().toString());
+    m_settingsManager->set(QStringLiteral("AlbumMosaic/AnimScope"), m_animScopeComboBox->currentData().toString());
+    m_settingsManager->set(QStringLiteral("AlbumMosaic/BgColor"), m_bgColor.name());
+
     m_settingsManager->storeSettings();
 }
 
@@ -212,9 +295,14 @@ void AlbumMosaicSettingsDialog::applySettings()
 
 void AlbumMosaicSettingsDialog::restoreDefaults()
 {
-    m_enableFlipCheckbox->setChecked(true);
-    m_flipIntervalSpinBox->setValue(3000);
+    m_enableAnimCheckbox->setChecked(true);
+    m_animIntervalSpinBox->setValue(3000);
     m_columnCountSpinBox->setValue(10);
-    m_genreComboBox->setCurrentIndex(0); // All Genres
-    m_artistComboBox->setCurrentIndex(0); // All Artists
+    m_genreComboBox->setCurrentIndex(0);
+    m_artistComboBox->setCurrentIndex(0);
+    m_animTypeComboBox->setCurrentIndex(0);
+    m_animSpeedComboBox->setCurrentIndex(1); // Medium
+    m_animScopeComboBox->setCurrentIndex(0); // Single
+    m_bgColor = Qt::black;
+    updateBgColorButton();
 }

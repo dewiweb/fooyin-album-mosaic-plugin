@@ -1,6 +1,6 @@
 {
     "Name" : "Album Mosaic",
-    "Version" : "1.0.0",
+    "Version" : "2.0.0",
     "Author" : "dewiweb",
     "Copyright" : "Copyright 2026, dewiweb",
     "License" : [ "Album Mosaic Plugin is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.",
@@ -10,6 +10,6 @@
                   "You should have received a copy of the GNU General Public License along with Album Mosaic Plugin.  If not, see <http://www.gnu.org/licenses/>"
                 ],
     "Category" : "Widgets",
-    "Description" : "iTunes-style album art mosaic with flip animation",
+    "Description" : "Album art mosaic with multiple animations, filtering, and playback controls",
     "Url" : "https://github.com/dewiweb/fooyin-album-mosaic-plugin"
 }

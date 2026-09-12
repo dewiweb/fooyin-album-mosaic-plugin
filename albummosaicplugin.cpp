@@ -28,24 +28,31 @@
 void AlbumMosaicPlugin::initialise(const Fooyin::CorePluginContext& context)
 {
     m_core = std::make_unique<Fooyin::CorePluginContext>(context);
-    
-    // Create CoverProvider with AudioLoader and SettingsManager
-    // Note: CoverProvider has a static cache, so all instances share the same cache
-    if(context.audioLoader && context.settingsManager) {
-        m_coverProvider = new Fooyin::CoverProvider(context.audioLoader, context.settingsManager, this);
-        m_coverProvider->setUsePlaceholder(false); // Don't use placeholder covers
-        
-        // Create settings for the plugin
-        context.settingsManager->createSetting(QStringLiteral("AlbumMosaic/EnableFlip"), true);
-        context.settingsManager->createSetting(QStringLiteral("AlbumMosaic/FlipInterval"), 3000);
+
+    // Create settings for the plugin
+    if(context.settingsManager) {
+        context.settingsManager->createSetting(QStringLiteral("AlbumMosaic/EnableAnim"), true);
+        context.settingsManager->createSetting(QStringLiteral("AlbumMosaic/AnimInterval"), 3000);
         context.settingsManager->createSetting(QStringLiteral("AlbumMosaic/ColumnCount"), 10);
         context.settingsManager->createSetting(QStringLiteral("AlbumMosaic/GenreFilter"), QString());
         context.settingsManager->createSetting(QStringLiteral("AlbumMosaic/ArtistFilter"), QString());
+        context.settingsManager->createSetting(QStringLiteral("AlbumMosaic/AnimType"), QStringLiteral("Flip3D"));
+        context.settingsManager->createSetting(QStringLiteral("AlbumMosaic/AnimSpeed"), QStringLiteral("Medium"));
+        context.settingsManager->createSetting(QStringLiteral("AlbumMosaic/AnimScope"), QStringLiteral("Single"));
+        context.settingsManager->createSetting(QStringLiteral("AlbumMosaic/BgColor"), QStringLiteral("#000000"));
     }
 }
 
 void AlbumMosaicPlugin::initialise(const Fooyin::GuiPluginContext& context)
 {
     m_context = const_cast<Fooyin::GuiPluginContext*>(&context);
+
+    // Use the shared CoverRepository from the GUI context (0.12.6+)
+    // This shares the cover cache with all other fooyin widgets
+    if(context.coverRepository) {
+        m_coverProvider = new Fooyin::CoverProvider(context.coverRepository, this);
+        m_coverProvider->setUsePlaceholder(false);
+    }
+
     context.widgetProvider->registerWidget("AlbumMosaic", [this]() { return new AlbumMosaicWidget(m_context, m_core.get(), m_coverProvider); }, "Album Mosaic");
 }
