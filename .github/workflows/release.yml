@@ -114,14 +114,16 @@ jobs:
           arch: x64
 
       - name: Setup vcpkg
-        uses: lukka/run-vcpkg@v11
-        with:
-          vcpkgGitCommitId: 'f7423ee180c4b7f40d43402c2feb3878625c1b52'
+        shell: pwsh
+        run: |
+          git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
+          C:\vcpkg\bootstrap-vcpkg.bat
+          echo "VCPKG_ROOT=C:\vcpkg" >> $env:GITHUB_ENV
 
       - name: Install ICU via vcpkg
         shell: pwsh
         run: |
-          & $VCPKG_ROOT/vcpkg install icu --triplet x64-windows
+          C:\vcpkg\vcpkg install icu --triplet x64-windows
 
       - name: Cache Fooyin build
         id: cache-fooyin
