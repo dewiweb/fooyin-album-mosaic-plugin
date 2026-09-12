@@ -122,26 +122,26 @@ jobs:
 
       - name: Clone and build Fooyin
         if: steps.cache-fooyin.outputs.cache-hit != 'true'
-        shell: cmd
+        shell: pwsh
         run: |
           git clone --depth 1 --branch v0.12.6 https://github.com/fooyin/fooyin.git C:\fooyin-src
           cd C:\fooyin-src
           git submodule update --init --recursive
-          cmake -B build -G Ninja ^
-            -DCMAKE_BUILD_TYPE=Release ^
-            -DCMAKE_INSTALL_PREFIX=C:\fooyin-dev ^
-            -DINSTALL_HEADERS=ON ^
-            -DBUILD_PLUGINS=OFF ^
-            -DCMAKE_PREFIX_PATH=%QT_ROOT_DIR%
+          cmake -B build -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_INSTALL_PREFIX=C:\fooyin-dev `
+            -DINSTALL_HEADERS=ON `
+            -DBUILD_PLUGINS=OFF `
+            -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR"
           cmake --build build
           cmake --install build
 
       - name: Build plugin
-        shell: cmd
+        shell: pwsh
         run: |
-          cmake -B build -G Ninja ^
-            -DCMAKE_BUILD_TYPE=Release ^
-            -DCMAKE_PREFIX_PATH="C:\fooyin-dev;%QT_ROOT_DIR%"
+          cmake -B build -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_PREFIX_PATH="C:\fooyin-dev;$env:QT_ROOT_DIR"
           cmake --build build
 
       - name: Upload artifact
