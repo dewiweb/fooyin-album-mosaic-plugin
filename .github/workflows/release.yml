@@ -113,12 +113,22 @@ jobs:
         with:
           arch: x64
 
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: 'f7423ee180c4b7f40d43402c2feb3878625c1b52'
+
+      - name: Install ICU via vcpkg
+        shell: pwsh
+        run: |
+          & $VCPKG_ROOT/vcpkg install icu --triplet x64-windows
+
       - name: Cache Fooyin build
         id: cache-fooyin
         uses: actions/cache@v4
         with:
           path: C:\fooyin-dev
-          key: fooyin-0.12.6-windows-${{ runner.os }}
+          key: fooyin-0.12.6-windows-vcpkg-${{ runner.os }}
 
       - name: Clone and build Fooyin
         if: steps.cache-fooyin.outputs.cache-hit != 'true'
@@ -132,7 +142,11 @@ jobs:
             -DCMAKE_INSTALL_PREFIX=C:\fooyin-dev `
             -DINSTALL_HEADERS=ON `
             -DBUILD_PLUGINS=OFF `
-            -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR"
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET=x64-windows `
+            -DQT_DIR="$env:QT_ROOT_DIR/lib/cmake/Qt6" `
+            -DQt6_DIR="$env:QT_ROOT_DIR/lib/cmake/Qt6" `
+            -DINSTALL_FHS=OFF
           cmake --build build
           cmake --install build
 
@@ -141,6 +155,8 @@ jobs:
         run: |
           cmake -B build -G Ninja `
             -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET=x64-windows `
             -DCMAKE_PREFIX_PATH="C:\fooyin-dev;$env:QT_ROOT_DIR"
           cmake --build build
 
