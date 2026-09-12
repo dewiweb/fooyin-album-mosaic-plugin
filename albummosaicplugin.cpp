@@ -40,6 +40,7 @@ void AlbumMosaicPlugin::initialise(const Fooyin::CorePluginContext& context)
         context.settingsManager->createSetting(QStringLiteral("AlbumMosaic/AnimSpeed"), QStringLiteral("Medium"));
         context.settingsManager->createSetting(QStringLiteral("AlbumMosaic/AnimScope"), QStringLiteral("Single"));
         context.settingsManager->createSetting(QStringLiteral("AlbumMosaic/BgColor"), QStringLiteral("#000000"));
+        context.settingsManager->createSetting(QStringLiteral("AlbumMosaic/SortMode"), QStringLiteral("Random"));
     }
 }
 

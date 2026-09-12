@@ -43,6 +43,7 @@ AlbumMosaicSettingsDialog::AlbumMosaicSettingsDialog(Fooyin::SettingsManager* se
     , m_animTypeComboBox{new QComboBox(this)}
     , m_animSpeedComboBox{new QComboBox(this)}
     , m_animScopeComboBox{new QComboBox(this)}
+    , m_sortModeComboBox{new QComboBox(this)}
     , m_bgColorButton{new QPushButton(this)}
     , m_bgColor{Qt::black}
 {
@@ -103,6 +104,17 @@ AlbumMosaicSettingsDialog::AlbumMosaicSettingsDialog(Fooyin::SettingsManager* se
     m_columnCountSpinBox->setRange(1, 20);
     columnLayout->addWidget(m_columnCountSpinBox);
     gridLayout->addLayout(columnLayout);
+
+    auto* sortLayout = new QHBoxLayout();
+    sortLayout->addWidget(new QLabel(tr("Sort By:"), this));
+    m_sortModeComboBox->addItem(tr("Random"), QStringLiteral("Random"));
+    m_sortModeComboBox->addItem(tr("Year (newest first)"), QStringLiteral("YearDesc"));
+    m_sortModeComboBox->addItem(tr("Year (oldest first)"), QStringLiteral("Year"));
+    m_sortModeComboBox->addItem(tr("Rating (highest first)"), QStringLiteral("Rating"));
+    m_sortModeComboBox->addItem(tr("Play Count (most played)"), QStringLiteral("PlayCount"));
+    m_sortModeComboBox->addItem(tr("Recently Played"), QStringLiteral("Recent"));
+    sortLayout->addWidget(m_sortModeComboBox);
+    gridLayout->addLayout(sortLayout);
 
     mainLayout->addWidget(gridGroup);
 
@@ -266,6 +278,12 @@ void AlbumMosaicSettingsDialog::loadSettings()
     m_bgColor = QColor(m_settingsManager->value(QStringLiteral("AlbumMosaic/BgColor")).toString());
     if(!m_bgColor.isValid()) m_bgColor = Qt::black;
     updateBgColorButton();
+
+    QString sortMode = m_settingsManager->value(QStringLiteral("AlbumMosaic/SortMode")).toString();
+    index = m_sortModeComboBox->findData(sortMode);
+    if(index >= 0) {
+        m_sortModeComboBox->setCurrentIndex(index);
+    }
 }
 
 void AlbumMosaicSettingsDialog::saveSettings()
@@ -283,6 +301,7 @@ void AlbumMosaicSettingsDialog::saveSettings()
     m_settingsManager->set(QStringLiteral("AlbumMosaic/AnimSpeed"), m_animSpeedComboBox->currentData().toString());
     m_settingsManager->set(QStringLiteral("AlbumMosaic/AnimScope"), m_animScopeComboBox->currentData().toString());
     m_settingsManager->set(QStringLiteral("AlbumMosaic/BgColor"), m_bgColor.name());
+    m_settingsManager->set(QStringLiteral("AlbumMosaic/SortMode"), m_sortModeComboBox->currentData().toString());
 
     m_settingsManager->storeSettings();
 }
@@ -303,6 +322,7 @@ void AlbumMosaicSettingsDialog::restoreDefaults()
     m_animTypeComboBox->setCurrentIndex(0);
     m_animSpeedComboBox->setCurrentIndex(1); // Medium
     m_animScopeComboBox->setCurrentIndex(0); // Single
+    m_sortModeComboBox->setCurrentIndex(0); // Random
     m_bgColor = Qt::black;
     updateBgColorButton();
 }

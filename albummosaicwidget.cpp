@@ -25,6 +25,8 @@
 #include <QWheelEvent>
 #include <QRandomGenerator>
 #include <QTimer>
+#include <QSet>
+#include <set>
 #include <QDebug>
 #include <algorithm>
 #include <numeric>
@@ -32,10 +34,10 @@
 #include <QFont>
 #include <QPainterPath>
 #include <QMenu>
-#include <QMessageBox>
 #include <QJsonObject>
 #include <cmath>
 #include <core/library/musiclibrary.h>
+#include <core/library/tracksort.h>
 #include <core/player/playercontroller.h>
 #include <core/playlist/playlisthandler.h>
 #include <core/playlist/playlist.h>
@@ -43,6 +45,9 @@
 #include <gui/coverprovider.h>
 #include <gui/coverartworktypes.h>
 #include <gui/trackselectioncontroller.h>
+#include <gui/propertiesdialog.h>
+#include <gui/widgets/tooltip.h>
+#include <utils/actions/widgetcontext.h>
 #include <core/plugins/coreplugincontext.h>
 #include <utils/settings/settingsmanager.h>
 
@@ -84,6 +89,15 @@ AlbumMosaicWidget::AlbumMosaicWidget(Fooyin::GuiPluginContext* guiContext, Fooyi
         // Load background color
         m_bgColor = QColor(m_coreContext->settingsManager->value(QStringLiteral("AlbumMosaic/BgColor")).toString());
         if(!m_bgColor.isValid()) m_bgColor = Qt::black;
+
+        // Load sort mode
+        const QString sortStr = m_coreContext->settingsManager->value(QStringLiteral("AlbumMosaic/SortMode")).toString();
+        if(sortStr == "Year") m_sortMode = SortMode::Year;
+        else if(sortStr == "YearDesc") m_sortMode = SortMode::YearDesc;
+        else if(sortStr == "Rating") m_sortMode = SortMode::Rating;
+        else if(sortStr == "PlayCount") m_sortMode = SortMode::PlayCount;
+        else if(sortStr == "Recent") m_sortMode = SortMode::Recent;
+        else m_sortMode = SortMode::Random;
     }
 
     setMouseTracking(true);
@@ -91,6 +105,56 @@ AlbumMosaicWidget::AlbumMosaicWidget(Fooyin::GuiPluginContext* guiContext, Fooyi
     if(m_enableAnim) {
         m_animTimer->start(m_animInterval);
     }
+
+    // Store placeholder cache key for cover comparison
+    if(m_coverProvider) {
+        m_placeholderCacheKey = m_coverProvider->placeholderCover().cacheKey();
+    }
+
+    // Fade-in timer — advances cover fade progress at ~20fps
+    m_fadeTimer = new QTimer(this);
+    m_fadeTimer->setInterval(50);
+    connect(m_fadeTimer, &QTimer::timeout, this, &AlbumMosaicWidget::advanceFade);
+
+    // Fooyin styled ToolTip — top-level so it's not clipped by widget bounds
+    m_toolTip = new Fooyin::ToolTip(nullptr);
+    m_toolTip->setWindowFlags(Qt::ToolTip | Qt::FramelessWindowHint);
+    // Semi-transparent dark style: black bg at 50% opacity, white text, subtle border
+    QPalette tipPalette = m_toolTip->palette();
+    tipPalette.setColor(QPalette::Highlight, QColor(0, 0, 0, 128));
+    tipPalette.setColor(QPalette::HighlightedText, QColor(255, 255, 255, 220));
+    m_toolTip->setPalette(tipPalette);
+    m_toolTip->hide();
+
+    // TrackSorter for idiomatic Fooyin sorting
+    m_trackSorter = std::make_unique<Fooyin::TrackSorter>();
+
+    // WidgetContext for TrackSelectionController integration
+    // This allows Fooyin's standard context menu actions (Play, Queue, Add to Playlist) to work
+    m_widgetContext = new Fooyin::WidgetContext(this, Fooyin::Context{Fooyin::Constants::Context::Global}, this);
+
+    // Inline sort bar — minimal combo in top-right corner
+    m_sortCombo = new QComboBox(this);
+    m_sortCombo->addItem(tr("Random"), QStringLiteral("Random"));
+    m_sortCombo->addItem(tr("Year ↓"), QStringLiteral("YearDesc"));
+    m_sortCombo->addItem(tr("Year ↑"), QStringLiteral("Year"));
+    m_sortCombo->addItem(tr("Rating"), QStringLiteral("Rating"));
+    m_sortCombo->addItem(tr("Plays"), QStringLiteral("PlayCount"));
+    m_sortCombo->addItem(tr("Recent"), QStringLiteral("Recent"));
+    m_sortCombo->setToolTip(tr("Sort albums"));
+    m_sortCombo->setFixedSize(90, 24);
+    m_sortCombo->setStyleSheet(QStringLiteral(
+        "QComboBox { background-color: rgba(0,0,0,180); color: white; border: 1px solid #444; border-radius: 3px; font-size: 11px; }"
+        "QComboBox::drop-down { border: none; width: 16px; }"
+        "QComboBox QAbstractItemView { background-color: #222; color: white; selection-background-color: #444; }"));
+    // Restore current sort
+    QString currentSort = QStringLiteral("Random");
+    if(m_coreContext && m_coreContext->settingsManager) {
+        currentSort = m_coreContext->settingsManager->value(QStringLiteral("AlbumMosaic/SortMode")).toString();
+    }
+    int idx = m_sortCombo->findData(currentSort);
+    if(idx >= 0) m_sortCombo->setCurrentIndex(idx);
+    connect(m_sortCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &AlbumMosaicWidget::onSortChanged);
 
     // Bug 8: Connect to MusicLibrary signals for dynamic updates
     if(m_coreContext && m_coreContext->library) {
@@ -116,7 +180,8 @@ AlbumMosaicWidget::AlbumMosaicWidget(Fooyin::GuiPluginContext* guiContext, Fooyi
 
     // loadAlbumMetadata() builds m_albums, then calls randomizeGrid()
     // which builds m_albumOrder and calls updateMosaic()
-    loadAlbumMetadata();
+    // Delayed to avoid blocking the event loop during startup
+    QTimer::singleShot(100, this, &AlbumMosaicWidget::loadAlbumMetadata);
 }
 
 AlbumMosaicWidget::~AlbumMosaicWidget()
@@ -139,6 +204,8 @@ void AlbumMosaicWidget::loadAlbumMetadata()
     if(!m_coreContext || !m_coreContext->library) {
         return;
     }
+
+    invalidateScaledCache();
 
     Fooyin::TrackList tracks = m_coreContext->library->tracks();
 
@@ -228,12 +295,20 @@ void AlbumMosaicWidget::loadAlbumMetadata()
     if(m_coverProvider) {
         disconnect(m_coverProvider, &Fooyin::CoverProvider::coverAdded, this, nullptr);
         connect(m_coverProvider, &Fooyin::CoverProvider::coverAdded, this, [this](const Fooyin::Track& track) {
-            for(const AlbumInfo& album : m_albums) {
+            // Clear scaled cache for this track's album so it gets re-fetched at next paint
+            for(int i = 0; i < m_albums.size(); ++i) {
+                const AlbumInfo& album = m_albums[i];
                 if(album.track.isValid() && album.track.id() == track.id()) {
-                    update();
+                    m_scaledCache.remove(i);
+                    // Start fade-in from 0
+                    m_coverFadeProgress[i] = 0;
+                    if(m_fadeTimer && !m_fadeTimer->isActive()) {
+                        m_fadeTimer->start();
+                    }
                     break;
                 }
             }
+            update();
         });
     }
 }
@@ -281,12 +356,56 @@ void AlbumMosaicWidget::randomizeGrid()
         return;
     }
 
-    // Build a shuffled permutation of album indices.
+    // Build a permutation of album indices based on sort mode.
     // This stays fixed until albums change — scrolling uses updateMosaic()
     // to slide a window through this permutation.
     m_albumOrder.resize(m_albums.size());
     std::iota(m_albumOrder.begin(), m_albumOrder.end(), 0);
-    std::shuffle(m_albumOrder.begin(), m_albumOrder.end(), *QRandomGenerator::global());
+
+    switch(m_sortMode) {
+        case SortMode::Random:
+            std::shuffle(m_albumOrder.begin(), m_albumOrder.end(), *QRandomGenerator::global());
+            break;
+        case SortMode::Year:
+        case SortMode::YearDesc: {
+            // Use Fooyin's TrackSorter with scripting for idiomatic sorting
+            if(m_trackSorter) {
+                const QString sortScript = QStringLiteral("%year%");
+                const auto order = (m_sortMode == SortMode::Year) ? Qt::AscendingOrder : Qt::DescendingOrder;
+                m_albumOrder = m_trackSorter->calcSortTracks(
+                    sortScript, m_albumOrder,
+                    [this](int albumIndex) { return m_albums[albumIndex].track; }, order);
+            }
+            break;
+        }
+        case SortMode::Rating: {
+            if(m_trackSorter) {
+                m_albumOrder = m_trackSorter->calcSortTracks(
+                    QStringLiteral("%rating%"), m_albumOrder,
+                    [this](int albumIndex) { return m_albums[albumIndex].track; },
+                    Qt::DescendingOrder);
+            }
+            break;
+        }
+        case SortMode::PlayCount: {
+            if(m_trackSorter) {
+                m_albumOrder = m_trackSorter->calcSortTracks(
+                    QStringLiteral("%playcount%"), m_albumOrder,
+                    [this](int albumIndex) { return m_albums[albumIndex].track; },
+                    Qt::DescendingOrder);
+            }
+            break;
+        }
+        case SortMode::Recent: {
+            if(m_trackSorter) {
+                m_albumOrder = m_trackSorter->calcSortTracks(
+                    QStringLiteral("%lastplayed%"), m_albumOrder,
+                    [this](int albumIndex) { return m_albums[albumIndex].track; },
+                    Qt::DescendingOrder);
+            }
+            break;
+        }
+    }
 
     updateMosaic();
 }
@@ -334,18 +453,19 @@ void AlbumMosaicWidget::triggerAnimation()
             anim.oldAlbumIndex = m_albumOrder[anim.orderIndex];
 
             int swapWith = QRandomGenerator::global()->bounded(m_albumOrder.size());
-            while(m_albumOrder.size() > 1 && swapWith == anim.orderIndex) {
+            while(m_albumOrder.size() > 1 && (swapWith == anim.orderIndex
+                   || m_albumOrder[swapWith] == m_lastSwappedCellA
+                   || m_albumOrder[swapWith] == m_lastSwappedCellB)) {
                 swapWith = QRandomGenerator::global()->bounded(m_albumOrder.size());
             }
             anim.newAlbumIndex = m_albumOrder[swapWith];
             anim.swapWithOrderIndex = swapWith;
+            m_lastSwappedCellA = anim.oldAlbumIndex;
+            m_lastSwappedCellB = anim.newAlbumIndex;
 
-            // Trigger async cover load
+            // Pre-load the new album cover (cached, non-blocking if already cached)
             if(anim.newAlbumIndex >= 0 && anim.newAlbumIndex < m_albums.size()) {
-                const AlbumInfo& newAlbum = m_albums[anim.newAlbumIndex];
-                if(newAlbum.track.isValid()) {
-                    m_coverProvider->trackCoverThumbnail(newAlbum.track, coverSize);
-                }
+                getCoverForPaint(anim.newAlbumIndex, m_coverPositions[0].size(), coverSize);
             }
             anim.animType = effectiveAnimType();
             anim.elapsed.start();
@@ -376,18 +496,19 @@ void AlbumMosaicWidget::triggerAnimation()
                 anim.oldAlbumIndex = m_albumOrder[anim.orderIndex];
 
                 int swapWith = QRandomGenerator::global()->bounded(m_albumOrder.size());
-                while(m_albumOrder.size() > 1 && (swapWith == anim.orderIndex || usedOrders.contains(swapWith))) {
+                while(m_albumOrder.size() > 1 && (swapWith == anim.orderIndex || usedOrders.contains(swapWith)
+                       || m_albumOrder[swapWith] == m_lastSwappedCellA
+                       || m_albumOrder[swapWith] == m_lastSwappedCellB)) {
                     swapWith = QRandomGenerator::global()->bounded(m_albumOrder.size());
                 }
                 usedOrders.insert(swapWith);
                 anim.newAlbumIndex = m_albumOrder[swapWith];
                 anim.swapWithOrderIndex = swapWith;
+                m_lastSwappedCellA = anim.oldAlbumIndex;
+                m_lastSwappedCellB = anim.newAlbumIndex;
 
                 if(anim.newAlbumIndex >= 0 && anim.newAlbumIndex < m_albums.size()) {
-                    const AlbumInfo& newAlbum = m_albums[anim.newAlbumIndex];
-                    if(newAlbum.track.isValid()) {
-                        m_coverProvider->trackCoverThumbnail(newAlbum.track, coverSize);
-                    }
+                    getCoverForPaint(anim.newAlbumIndex, m_coverPositions[0].size(), coverSize);
                 }
                 anim.animType = effectiveAnimType();
             anim.elapsed.start();
@@ -417,17 +538,18 @@ void AlbumMosaicWidget::triggerAnimation()
                 anim.oldAlbumIndex = m_albumOrder[anim.orderIndex];
 
                 int swapWith = QRandomGenerator::global()->bounded(m_albumOrder.size());
-                while(m_albumOrder.size() > 1 && swapWith == anim.orderIndex) {
+                while(m_albumOrder.size() > 1 && (swapWith == anim.orderIndex
+                       || m_albumOrder[swapWith] == m_lastSwappedCellA
+                       || m_albumOrder[swapWith] == m_lastSwappedCellB)) {
                     swapWith = QRandomGenerator::global()->bounded(m_albumOrder.size());
                 }
                 anim.newAlbumIndex = m_albumOrder[swapWith];
                 anim.swapWithOrderIndex = swapWith;
+                m_lastSwappedCellA = anim.oldAlbumIndex;
+                m_lastSwappedCellB = anim.newAlbumIndex;
 
                 if(anim.newAlbumIndex >= 0 && anim.newAlbumIndex < m_albums.size()) {
-                    const AlbumInfo& newAlbum = m_albums[anim.newAlbumIndex];
-                    if(newAlbum.track.isValid()) {
-                        m_coverProvider->trackCoverThumbnail(newAlbum.track, coverSize);
-                    }
+                    getCoverForPaint(anim.newAlbumIndex, m_coverPositions[0].size(), coverSize);
                 }
                 anim.animType = effectiveAnimType();
             anim.elapsed.start();
@@ -451,8 +573,8 @@ void AlbumMosaicWidget::triggerAnimation()
         if(progress >= 0.5f && !anim.newCoverReady && anim.newAlbumIndex >= 0 && anim.newAlbumIndex < m_albums.size()) {
             const AlbumInfo& newAlbum = m_albums[anim.newAlbumIndex];
             if(newAlbum.track.isValid()) {
-                QPixmap testCover = m_coverProvider->trackCoverThumbnail(newAlbum.track, coverSize);
-                if(!testCover.isNull()) {
+                // Check if cover is already cached (non-blocking)
+                if(m_scaledCache.contains(anim.newAlbumIndex)) {
                     anim.newCoverReady = true;
                     if(anim.swapWithOrderIndex >= 0 && anim.swapWithOrderIndex < m_albumOrder.size()) {
                         m_albumOrder[anim.orderIndex] = anim.newAlbumIndex;
@@ -462,6 +584,7 @@ void AlbumMosaicWidget::triggerAnimation()
                         m_currentGridIndices[anim.cellIndex] = anim.newAlbumIndex;
                     }
                 }
+                // If not cached, request async — newCoverReady stays false until loaded
             }
         }
 
@@ -474,19 +597,42 @@ void AlbumMosaicWidget::triggerAnimation()
     update();
 
     if(!m_activeAnims.isEmpty()) {
-        QTimer::singleShot(16, this, &AlbumMosaicWidget::triggerAnimation); // ~60fps
+        QTimer::singleShot(33, this, &AlbumMosaicWidget::triggerAnimation); // ~30fps
     }
 }
 
 void AlbumMosaicWidget::wheelEvent(QWheelEvent* event)
 {
     const int delta = event->angleDelta().y();
+
+    // Ctrl+wheel: zoom (change column count)
+    if(event->modifiers() & Qt::ControlModifier) {
+        if(delta > 0 && m_columnCount > 2) {
+            m_columnCount--;
+        }
+        else if(delta < 0 && m_columnCount < 30) {
+            m_columnCount++;
+        }
+        // Persist the new column count
+        if(m_coreContext && m_coreContext->settingsManager) {
+            m_coreContext->settingsManager->set(QStringLiteral("AlbumMosaic/ColumnCount"), m_columnCount);
+        }
+        updateMosaic();
+        update();
+        updateVisibleThumbnailKeys();
+        event->accept();
+        return;
+    }
+
     const int scrollAmount = delta > 0 ? -1 : 1;
 
     m_scrollOffset += scrollAmount;
 
     updateMosaic();
     update();
+
+    // Pin newly visible covers in CoverProvider's cache
+    updateVisibleThumbnailKeys();
 
     event->accept();
 }
@@ -509,8 +655,13 @@ void AlbumMosaicWidget::mouseMoveEvent(QMouseEvent* event)
                 int albumIndex = m_currentGridIndices[i];
                 if(albumIndex < m_albums.size()) {
                     const AlbumInfo& album = m_albums[albumIndex];
-                    QString tooltipText = QString("%1\n%2").arg(album.album, album.albumArtist);
-                    setToolTip(tooltipText);
+                    // Use Fooyin's styled ToolTip: title = album, subtext = artist
+                    if(m_toolTip) {
+                        m_toolTip->setContent(album.album, album.albumArtist);
+                        // AlignLeft positions the tooltip above the cursor (y - height)
+                        m_toolTip->setPosition(event->globalPosition().toPoint(), Qt::AlignLeft);
+                        m_toolTip->show();
+                    }
                 }
             }
             break;
@@ -521,8 +672,8 @@ void AlbumMosaicWidget::mouseMoveEvent(QMouseEvent* event)
         update();
     }
 
-    if(m_hoveredCellIndex == -1) {
-        setToolTip("");
+    if(m_hoveredCellIndex == -1 && m_toolTip) {
+        m_toolTip->hide();
     }
 }
 
@@ -565,48 +716,74 @@ void AlbumMosaicWidget::contextMenuEvent(QContextMenuEvent* event)
         int albumIndex = m_currentGridIndices[m_rightClickedCellIndex];
         if(albumIndex < m_albums.size()) {
             const AlbumInfo& album = m_albums[albumIndex];
+            Fooyin::TrackList albumTracks = getAlbumTracks(album.album, album.albumArtist);
 
+            // Explicit "Play Album" action — always available, clearly labeled
             QAction* playAction = menu.addAction(tr("Play Album"));
-            QAction* queueAction = menu.addAction(tr("Queue Album"));
-            menu.addSeparator();
-
-            // Feature: Add to playlist via TrackSelectionController
-            if(m_guiContext && m_guiContext->trackSelection) {
-                Fooyin::TrackList albumTracks = getAlbumTracks(album.album, album.albumArtist);
-                if(!albumTracks.empty()) {
-                    QMenu* addToPlaylistMenu = menu.addMenu(tr("Add to Playlist"));
-                    m_guiContext->trackSelection->addTrackAddToPlaylistContextMenu(addToPlaylistMenu);
-                }
-            }
-
-            QAction* infoAction = menu.addAction(tr("Album Info"));
-            menu.addSeparator();
-            QAction* settingsAction = menu.addAction(tr("Settings"));
-
-            QAction* selectedAction = menu.exec(event->globalPos());
-
-            if(selectedAction == playAction) {
+            connect(playAction, &QAction::triggered, this, [this, album]() {
                 playAlbum(album.album, album.albumArtist);
+            });
+
+            // "Play and Replace Queue" — clears the queue, then plays the album
+            QAction* playReplaceQueueAction = menu.addAction(tr("Play and Replace Queue"));
+            connect(playReplaceQueueAction, &QAction::triggered, this, [this, album, albumTracks]() {
+                if(m_coreContext && m_coreContext->playerController) {
+                    m_coreContext->playerController->clearQueue();
+                    m_coreContext->playerController->queueTracks(albumTracks);
+                }
+                playAlbum(album.album, album.albumArtist);
+            });
+
+            // Use Fooyin's standard track context menu (Queue, Add to Playlist, Properties, etc.)
+            if(m_guiContext && m_guiContext->trackSelection && !albumTracks.empty()) {
+                // Register the selection with our WidgetContext so Fooyin's actions work
+                Fooyin::TrackSelection selection;
+                selection.tracks = albumTracks;
+                m_guiContext->trackSelection->changeSelectedTracks(m_widgetContext, selection);
+
+                // Add Fooyin actions at top level (Queue, Add to Playlist, Properties, etc.)
+                m_guiContext->trackSelection->addTrackContextMenu(&menu, m_widgetContext);
+                m_guiContext->trackSelection->addTrackPlaylistContextMenu(&menu);
+                m_guiContext->trackSelection->addTrackQueueContextMenu(&menu);
             }
-            else if(selectedAction == queueAction) {
-                queueAlbum(album.album, album.albumArtist);
+
+            // Our custom actions in submenus, clearly separated from Fooyin's
+            menu.addSeparator();
+            QMenu* albumMenu = menu.addMenu(tr("Album"));
+            QAction* showInLibAction = albumMenu->addAction(tr("Show in Library"));
+            connect(showInLibAction, &QAction::triggered, this, [this, album]() {
+                showInLibrary(album.album, album.albumArtist);
+            });
+            if(m_guiContext && m_guiContext->trackSelection && !albumTracks.empty()) {
+                QAction* searchCoverAction = albumMenu->addAction(tr("Search for Cover..."));
+                connect(searchCoverAction, &QAction::triggered, this, [this, albumTracks]() {
+                    emit m_guiContext->trackSelection->requestArtworkSearch(albumTracks, false);
+                });
             }
-            else if(selectedAction == infoAction) {
-                showAlbumInfo(album);
-            }
-            else if(selectedAction == settingsAction) {
+
+            QMenu* viewMenu = menu.addMenu(tr("View"));
+            addQuickSettings(viewMenu);
+
+            menu.addSeparator();
+            QAction* settingsAction = menu.addAction(tr("More Settings..."));
+            connect(settingsAction, &QAction::triggered, this, [this]() {
                 showSettingsDialog();
-            }
+            });
+
+            menu.exec(event->globalPos());
             return;
         }
     }
 
-    QAction* settingsAction = menu.addAction(tr("Settings"));
-    QAction* selectedAction = menu.exec(event->globalPos());
-
-    if(selectedAction == settingsAction) {
+    // Background right-click: view settings only
+    QMenu* viewMenu = menu.addMenu(tr("View"));
+    addQuickSettings(viewMenu);
+    menu.addSeparator();
+    QAction* settingsAction = menu.addAction(tr("More Settings..."));
+    connect(settingsAction, &QAction::triggered, this, [this]() {
         showSettingsDialog();
-    }
+    });
+    menu.exec(event->globalPos());
 }
 
 Fooyin::TrackList AlbumMosaicWidget::getAlbumTracks(const QString& album, const QString& albumArtist)
@@ -636,22 +813,22 @@ void AlbumMosaicWidget::queueAlbum(const QString& album, const QString& albumArt
     }
 }
 
-void AlbumMosaicWidget::showAlbumInfo(const AlbumInfo& album)
+void AlbumMosaicWidget::showInLibrary(const QString& album, const QString& albumArtist)
 {
-    Fooyin::TrackList tracks = getAlbumTracks(album.album, album.albumArtist);
-    uint64_t totalDuration = 0;
-    for(const auto& track : tracks) {
-        totalDuration += track.duration();
+    // Feature: Show in library — select the album's tracks in the library view
+    if(!m_guiContext || !m_guiContext->trackSelection) {
+        return;
     }
-    int totalSecs = static_cast<int>(totalDuration / 1000);
-    QString duration = QString("%1:%2").arg(totalSecs / 60).arg(totalSecs % 60, 2, 10, QChar('0'));
 
-    QString info = tr("Album: %1\nArtist: %2\nTracks: %3\nDuration: %4\nPath: %5")
-                      .arg(album.album, album.albumArtist)
-                      .arg(tracks.size())
-                      .arg(duration)
-                      .arg(album.filePath);
-    QMessageBox::information(this, tr("Album Information"), info);
+    Fooyin::TrackList albumTracks = getAlbumTracks(album, albumArtist);
+    if(albumTracks.empty()) {
+        return;
+    }
+
+    // Change the track selection so other widgets (library, playlist) can react
+    Fooyin::TrackSelection selection;
+    selection.tracks = albumTracks;
+    m_guiContext->trackSelection->changeSelectedTracks(m_widgetContext, selection);
 }
 
 void AlbumMosaicWidget::showSettingsDialog()
@@ -664,6 +841,114 @@ void AlbumMosaicWidget::showSettingsDialog()
     dialog.exec();
 
     loadSettings();
+}
+
+void AlbumMosaicWidget::addQuickSettings(QMenu* menu)
+{
+    if(!m_coreContext || !m_coreContext->settingsManager) {
+        return;
+    }
+
+    auto* settings = m_coreContext->settingsManager;
+
+    // Animation toggle
+    QAction* animToggle = menu->addAction(tr("Animation"));
+    animToggle->setCheckable(true);
+    animToggle->setChecked(m_enableAnim);
+    connect(animToggle, &QAction::triggered, this, [this, settings](bool checked) {
+        m_enableAnim = checked;
+        settings->set(QStringLiteral("AlbumMosaic/EnableAnim"), checked);
+        if(checked) {
+            m_animTimer->start(m_animInterval);
+        } else {
+            m_animTimer->stop();
+            m_activeAnims.clear();
+            update();
+        }
+    });
+
+    // Animation type submenu
+    QMenu* animTypeMenu = menu->addMenu(tr("Animation Type"));
+    auto addAnimTypeAction = [this, settings, animTypeMenu](const QString& label, AnimType type) {
+        QAction* action = animTypeMenu->addAction(label);
+        action->setCheckable(true);
+        action->setChecked(m_animType == type);
+        connect(action, &QAction::triggered, this, [this, settings, type]() {
+            m_animType = type;
+            settings->set(QStringLiteral("AlbumMosaic/AnimType"),
+                          type == AnimType::Flip3D ? "Flip3D" :
+                          type == AnimType::Crossfade ? "Crossfade" :
+                          type == AnimType::Slide ? "Slide" :
+                          type == AnimType::Zoom ? "Zoom" :
+                          type == AnimType::PageCurl ? "PageCurl" : "Random");
+        });
+    };
+    addAnimTypeAction(tr("3D Flip"), AnimType::Flip3D);
+    addAnimTypeAction(tr("Crossfade"), AnimType::Crossfade);
+    addAnimTypeAction(tr("Slide"), AnimType::Slide);
+    addAnimTypeAction(tr("Zoom"), AnimType::Zoom);
+    addAnimTypeAction(tr("Page Curl"), AnimType::PageCurl);
+    addAnimTypeAction(tr("Random"), AnimType::Random);
+
+    // Animation speed submenu
+    QMenu* speedMenu = menu->addMenu(tr("Animation Speed"));
+    auto addSpeedAction = [this, settings, speedMenu](const QString& label, AnimSpeed speed) {
+        QAction* action = speedMenu->addAction(label);
+        action->setCheckable(true);
+        action->setChecked(m_animSpeed == speed);
+        connect(action, &QAction::triggered, this, [this, settings, speed]() {
+            m_animSpeed = speed;
+            settings->set(QStringLiteral("AlbumMosaic/AnimSpeed"),
+                          speed == AnimSpeed::Fast ? "Fast" :
+                          speed == AnimSpeed::Slow ? "Slow" : "Medium");
+        });
+    };
+    addSpeedAction(tr("Fast"), AnimSpeed::Fast);
+    addSpeedAction(tr("Medium"), AnimSpeed::Medium);
+    addSpeedAction(tr("Slow"), AnimSpeed::Slow);
+
+    // Animation scope submenu
+    QMenu* scopeMenu = menu->addMenu(tr("Animation Scope"));
+    auto addScopeAction = [this, settings, scopeMenu](const QString& label, AnimScope scope) {
+        QAction* action = scopeMenu->addAction(label);
+        action->setCheckable(true);
+        action->setChecked(m_animScope == scope);
+        connect(action, &QAction::triggered, this, [this, settings, scope]() {
+            m_animScope = scope;
+            settings->set(QStringLiteral("AlbumMosaic/AnimScope"),
+                          scope == AnimScope::Multiple ? "Multiple" :
+                          scope == AnimScope::Wave ? "Wave" : "Single");
+        });
+    };
+    addScopeAction(tr("Single"), AnimScope::Single);
+    addScopeAction(tr("Multiple"), AnimScope::Multiple);
+    addScopeAction(tr("Wave"), AnimScope::Wave);
+
+    // Sort mode submenu
+    QMenu* sortMenu = menu->addMenu(tr("Sort By"));
+    auto addSortAction = [this, settings, sortMenu](const QString& label, SortMode mode) {
+        QAction* action = sortMenu->addAction(label);
+        action->setCheckable(true);
+        action->setChecked(m_sortMode == mode);
+        connect(action, &QAction::triggered, this, [this, settings, mode]() {
+            m_sortMode = mode;
+            settings->set(QStringLiteral("AlbumMosaic/SortMode"),
+                          mode == SortMode::Year ? "Year" :
+                          mode == SortMode::YearDesc ? "YearDesc" :
+                          mode == SortMode::Rating ? "Rating" :
+                          mode == SortMode::PlayCount ? "PlayCount" :
+                          mode == SortMode::Recent ? "Recent" : "Random");
+            randomizeGrid();
+            invalidateScaledCache();
+            update();
+        });
+    };
+    addSortAction(tr("Random"), SortMode::Random);
+    addSortAction(tr("Year (newest first)"), SortMode::YearDesc);
+    addSortAction(tr("Year (oldest first)"), SortMode::Year);
+    addSortAction(tr("Rating (highest first)"), SortMode::Rating);
+    addSortAction(tr("Play Count"), SortMode::PlayCount);
+    addSortAction(tr("Recently Played"), SortMode::Recent);
 }
 
 void AlbumMosaicWidget::loadSettings()
@@ -700,6 +985,24 @@ void AlbumMosaicWidget::loadSettings()
         m_bgColor = QColor(m_coreContext->settingsManager->value(QStringLiteral("AlbumMosaic/BgColor")).toString());
         if(!m_bgColor.isValid()) m_bgColor = Qt::black;
 
+        // Load sort mode
+        const QString sortStr = m_coreContext->settingsManager->value(QStringLiteral("AlbumMosaic/SortMode")).toString();
+        if(sortStr == "Year") m_sortMode = SortMode::Year;
+        else if(sortStr == "YearDesc") m_sortMode = SortMode::YearDesc;
+        else if(sortStr == "Rating") m_sortMode = SortMode::Rating;
+        else if(sortStr == "PlayCount") m_sortMode = SortMode::PlayCount;
+        else if(sortStr == "Recent") m_sortMode = SortMode::Recent;
+        else m_sortMode = SortMode::Random;
+
+        // Sync inline sort combo
+        if(m_sortCombo) {
+            int idx = m_sortCombo->findData(sortStr);
+            if(idx >= 0 && idx != m_sortCombo->currentIndex()) {
+                QSignalBlocker blocker(m_sortCombo);
+                m_sortCombo->setCurrentIndex(idx);
+            }
+        }
+
         if(m_enableAnim) {
             m_animTimer->start(m_animInterval);
         } else {
@@ -710,6 +1013,27 @@ void AlbumMosaicWidget::loadSettings()
         loadAlbumMetadata();
         update();
     }
+}
+
+void AlbumMosaicWidget::onSortChanged()
+{
+    if(!m_sortCombo || !m_coreContext || !m_coreContext->settingsManager) {
+        return;
+    }
+
+    const QString sortStr = m_sortCombo->currentData().toString();
+    m_coreContext->settingsManager->set(QStringLiteral("AlbumMosaic/SortMode"), sortStr);
+
+    // Update sort mode and re-sort
+    if(sortStr == "Year") m_sortMode = SortMode::Year;
+    else if(sortStr == "YearDesc") m_sortMode = SortMode::YearDesc;
+    else if(sortStr == "Rating") m_sortMode = SortMode::Rating;
+    else if(sortStr == "PlayCount") m_sortMode = SortMode::PlayCount;
+    else if(sortStr == "Recent") m_sortMode = SortMode::Recent;
+    else m_sortMode = SortMode::Random;
+
+    randomizeGrid();
+    update();
 }
 
 void AlbumMosaicWidget::playAlbum(const QString& album, const QString& albumArtist)
@@ -782,6 +1106,12 @@ void AlbumMosaicWidget::paintEvent(QPaintEvent* event)
     const auto coverSize = Fooyin::CoverProvider::findThumbnailSize(m_coverPositions[0].size());
     const bool useAdaptiveSize = m_coverProvider != nullptr;
 
+    // If cell size changed, clear scaled cache (covers will be re-scaled on next paint)
+    if(m_scaledCacheCellSize != m_coverPositions[0].size()) {
+        m_scaledCache.clear();
+        m_scaledCacheCellSize = m_coverPositions[0].size();
+    }
+
     // Duration based on speed setting (must match triggerAnimation)
     const int durationMs = [this]() {
         switch(m_animSpeed) {
@@ -820,13 +1150,22 @@ void AlbumMosaicWidget::paintEvent(QPaintEvent* event)
                 const bool isPlaying = (album.album == m_currentPlayingAlbum
                                         && album.albumArtist == m_currentPlayingArtist);
 
-                QPixmap cover;
-                if(m_coverProvider && album.track.isValid()) {
-                    cover = m_coverProvider->trackCoverThumbnail(album.track, coverSize);
+                // Use cached scaled cover — avoids loading + scaling every frame
+                QPixmap scaledCover = getCoverForPaint(albumIndex, cell.size(), coverSize);
+
+                // Always draw placeholder first (covers fade in over it)
+                {
+                    QLinearGradient gradient(cell.topLeft(), cell.bottomRight());
+                    gradient.setColorAt(0, QColor(60, 60, 70));
+                    gradient.setColorAt(1, QColor(40, 40, 50));
+                    painter.fillRect(cell, gradient);
                 }
 
-                if(!cover.isNull()) {
-                    QPixmap scaledCover = cover.scaled(cell.size(), Qt::KeepAspectRatio, Qt::SmoothTransformation);
+                if(!scaledCover.isNull()) {
+                    // Get fade progress (0-100), default to 100 if not fading
+                    int fade = m_coverFadeProgress.value(albumIndex, 100);
+                    qreal opacity = fade / 100.0;
+
                     QRect destRect = scaledCover.rect();
                     destRect.moveCenter(cell.center());
 
@@ -841,15 +1180,12 @@ void AlbumMosaicWidget::paintEvent(QPaintEvent* event)
                         QPixmap animCover = scaledCover;
                         QRect animRect = destRect;
                         if(albumToShow >= 0 && albumToShow < m_albums.size() && albumToShow != albumIndex) {
-                            const AlbumInfo& flipAlbum = m_albums[albumToShow];
-                            QPixmap flipCover;
-                            if(m_coverProvider && flipAlbum.track.isValid()) {
-                                flipCover = m_coverProvider->trackCoverThumbnail(flipAlbum.track, coverSize);
-                            }
-                            if(!flipCover.isNull()) {
-                                animCover = flipCover.scaled(cell.size(), Qt::KeepAspectRatio, Qt::SmoothTransformation);
+                            animCover = getCoverForPaint(albumToShow, cell.size(), coverSize);
+                            if(!animCover.isNull()) {
                                 animRect = animCover.rect();
                                 animRect.moveCenter(cell.center());
+                            } else {
+                                animCover = scaledCover;
                             }
                         }
 
@@ -1008,6 +1344,8 @@ void AlbumMosaicWidget::paintEvent(QPaintEvent* event)
 
                         painter.restore();
                     } else {
+                        painter.save();
+                        painter.setOpacity(opacity);
                         if(isHovered) {
                             painter.setPen(QPen(QColor(255, 255, 255, 100), 3));
                             painter.setBrush(Qt::NoBrush);
@@ -1016,6 +1354,7 @@ void AlbumMosaicWidget::paintEvent(QPaintEvent* event)
                         } else {
                             painter.drawPixmap(destRect, scaledCover);
                         }
+                        painter.restore();
                     }
 
                     // Feature: Highlight currently playing album with green border
@@ -1045,11 +1384,7 @@ void AlbumMosaicWidget::paintEvent(QPaintEvent* event)
                         painter.drawText(textRect, Qt::AlignCenter, shortName);
                     }
                 } else {
-                    // Draw attractive placeholder with gradient
-                    QLinearGradient gradient(cell.topLeft(), cell.bottomRight());
-                    gradient.setColorAt(0, QColor(60, 60, 70));
-                    gradient.setColorAt(1, QColor(40, 40, 50));
-                    painter.fillRect(cell, gradient);
+                    // Placeholder already drawn above, just add hover/playing/text overlay
 
                     if(isHovered) {
                         painter.setPen(QPen(QColor(255, 255, 255, 100), 3));
@@ -1082,11 +1417,100 @@ void AlbumMosaicWidget::paintEvent(QPaintEvent* event)
             }
         }
     }
+
+    // Cover loading is handled by CoverProvider's async scan + coverAdded signal.
+    // No need to schedule repaints here.
 }
 
 void AlbumMosaicWidget::resizeEvent(QResizeEvent* event)
 {
     Q_UNUSED(event)
+    // Position sort combo in top-right corner
+    if(m_sortCombo) {
+        m_sortCombo->move(width() - m_sortCombo->width() - 8, 8);
+    }
+    invalidateScaledCache();
     updateMosaic();
     update();
+    updateVisibleThumbnailKeys();
+}
+
+void AlbumMosaicWidget::invalidateScaledCache()
+{
+    m_scaledCache.clear();
+    m_scaledCacheCellSize = QSize(0, 0);
+}
+
+QPixmap AlbumMosaicWidget::getCoverForPaint(int albumIndex, const QSize& cellSize, const Fooyin::ThumbnailSize& coverSize)
+{
+    // Return scaled cache if available and cell size matches
+    if(m_scaledCache.contains(albumIndex) && m_scaledCacheCellSize == cellSize) {
+        return m_scaledCache[albumIndex];
+    }
+
+    // Not in scaled cache — query CoverProvider (cheap cache lookup, triggers async load if not ready)
+    if(!m_coverProvider || albumIndex < 0 || albumIndex >= m_albums.size()) {
+        return {};
+    }
+
+    const AlbumInfo& album = m_albums[albumIndex];
+    if(!album.track.isValid()) {
+        return {};
+    }
+
+    QPixmap cover = m_coverProvider->trackCoverThumbnail(album.track, coverSize);
+
+    // Check if CoverProvider returned the placeholder (cover not yet loaded)
+    if(cover.isNull() || cover.cacheKey() == m_placeholderCacheKey) {
+        return {}; // coverAdded will fire when the real cover is available
+    }
+
+    // Scale to cell size and cache
+    while(m_scaledCache.size() >= MAX_CACHE_SIZE) {
+        m_scaledCache.remove(m_scaledCache.begin().key());
+    }
+
+    QPixmap scaled = cover.scaled(cellSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    m_scaledCache[albumIndex] = scaled;
+    m_scaledCacheCellSize = cellSize;
+    return scaled;
+}
+
+void AlbumMosaicWidget::updateVisibleThumbnailKeys()
+{
+    if(!m_coverProvider || m_coverPositions.isEmpty()) {
+        return;
+    }
+
+    const auto coverSize = Fooyin::CoverProvider::findThumbnailSize(m_coverPositions[0].size());
+    std::set<QString> keys;
+
+    for(int albumIndex : m_currentGridIndices) {
+        if(albumIndex < 0 || albumIndex >= m_albums.size()) continue;
+        const AlbumInfo& album = m_albums[albumIndex];
+        if(!album.track.isValid()) continue;
+        keys.insert(m_coverProvider->thumbnailCacheKey(album.track, coverSize));
+    }
+
+    m_coverProvider->setVisibleThumbnailKeys(this, keys);
+}
+
+void AlbumMosaicWidget::advanceFade()
+{
+    bool anyFading = false;
+    for(int albumIndex : m_currentGridIndices) {
+        if(!m_coverFadeProgress.contains(albumIndex)) continue;
+        int progress = m_coverFadeProgress[albumIndex];
+        if(progress < 100) {
+            progress = qMin(100, progress + 100 / FADE_STEPS);
+            m_coverFadeProgress[albumIndex] = progress;
+            anyFading = true;
+        }
+    }
+
+    if(anyFading) {
+        update();
+    } else {
+        m_fadeTimer->stop();
+    }
 }

@@ -10,18 +10,24 @@
 #   ./scripts/test.sh --target=old  # Launch old fooyin 0.10.3 (/usr/local/bin)
 #   ./scripts/test.sh --debug      # Run under gdb
 #   ./scripts/test.sh --logs       # Show fooyin debug output (QT_LOGGING)
+#   ./scripts/test.sh --timeout=30 # Kill fooyin after 30s (default: 0 = no timeout)
+#   ./scripts/test.sh --monitor    # Print RSS/CPU every 5s until fooyin exits
 #
 set -euo pipefail
 
 TARGET="dev"
 DEBUG=false
 SHOW_LOGS=false
+TIMEOUT=0
+MONITOR=false
 
 for arg in "$@"; do
     case "$arg" in
-        --target=*) TARGET="${arg#--target=}" ;;
-        --debug)    DEBUG=true ;;
-        --logs)     SHOW_LOGS=true ;;
+        --target=*)  TARGET="${arg#--target=}" ;;
+        --debug)     DEBUG=true ;;
+        --logs)      SHOW_LOGS=true ;;
+        --timeout=*) TIMEOUT="${arg#--timeout=}" ;;
+        --monitor)   MONITOR=true ;;
         --help|-h)
             grep '^#' "$0" | sed 's/^# \?//'
             exit 0
@@ -89,8 +95,65 @@ if $DEBUG; then
     fi
 else
     if [ "$TARGET" = "flatpak" ]; then
-        exec flatpak run org.fooyin.fooyin
+        if [ "$TIMEOUT" -gt 0 ] || $MONITOR; then
+            flatpak run org.fooyin.fooyin &
+            FOY_PID=$!
+        else
+            exec flatpak run org.fooyin.fooyin
+        fi
     else
-        exec "$FOOYIN_BIN"
+        if [ "$TIMEOUT" -gt 0 ] || $MONITOR; then
+            "$FOOYIN_BIN" &
+            FOY_PID=$!
+        else
+            exec "$FOOYIN_BIN"
+        fi
     fi
+fi
+
+# --- Timeout / monitor mode ---
+if [ "$TIMEOUT" -gt 0 ] || $MONITOR; then
+    # Cleanup function — always kills fooyin on exit
+    cleanup() {
+        if [ -n "${FOY_PID:-}" ]; then
+            kill "$FOY_PID" 2>/dev/null || true
+            sleep 1
+            kill -9 "$FOY_PID" 2>/dev/null || true
+        fi
+        # Kill any leftover fooyin processes
+        pkill -9 -f "$FOOYIN_BIN" 2>/dev/null || true
+        if [ "$TARGET" = "flatpak" ]; then
+            pkill -9 -f "flatpak run org.fooyin.fooyin" 2>/dev/null || true
+        fi
+    }
+    trap cleanup EXIT INT TERM
+
+    echo "  Timeout: ${TIMEOUT}s (0 = no timeout)"
+    echo "  Monitor: $MONITOR"
+    echo ""
+
+    ELAPSED=0
+    INTERVAL=5
+    while kill -0 "$FOY_PID" 2>/dev/null; do
+        sleep "$INTERVAL"
+        ELAPSED=$((ELAPSED + INTERVAL))
+
+        if $MONITOR; then
+            RSS=$(ps -o rss= -p "$FOY_PID" 2>/dev/null | tr -d ' ' || echo "?")
+            CPU=$(ps -o %cpu= -p "$FOY_PID" 2>/dev/null | tr -d ' ' || echo "?")
+            echo "  [${ELAPSED}s] RSS: ${RSS} KB, CPU: ${CPU}%"
+        fi
+
+        if [ "$TIMEOUT" -gt 0 ] && [ "$ELAPSED" -ge "$TIMEOUT" ]; then
+            echo ""
+            echo "=== Timeout reached (${TIMEOUT}s) — killing Fooyin ==="
+            RSS=$(ps -o rss= -p "$FOY_PID" 2>/dev/null | tr -d ' ' || echo "?")
+            CPU=$(ps -o %cpu= -p "$FOY_PID" 2>/dev/null | tr -d ' ' || echo "?")
+            echo "  Final: RSS: ${RSS} KB, CPU: ${CPU}%"
+            break
+        fi
+    done
+
+    cleanup
+    echo "=== Fooyin terminated ==="
 fi

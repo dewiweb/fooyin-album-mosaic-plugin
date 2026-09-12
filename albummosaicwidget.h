@@ -26,9 +26,12 @@
 #include <QHash>
 #include <QRect>
 #include <QElapsedTimer>
+#include <QComboBox>
 #include <core/plugins/coreplugincontext.h>
 #include <gui/plugins/guiplugin.h>
+#include <gui/coverartworktypes.h>
 #include <core/track.h>
+#include <memory>
 
 struct AlbumInfo {
     QString album;
@@ -43,6 +46,9 @@ class CorePluginContext;
 class CoverProvider;
 class PlaylistHandler;
 class PlayerController;
+class TrackSorter;
+class ToolTip;
+class WidgetContext;
 }
 
 class AlbumMosaicWidget : public Fooyin::FyWidget
@@ -76,11 +82,13 @@ private:
     void updateMosaic();
     void triggerAnimation();
     void randomizeGrid();
+    void sortAlbums();
     AnimType effectiveAnimType() const;
     void playAlbum(const QString& album, const QString& albumArtist);
     void queueAlbum(const QString& album, const QString& albumArtist);
-    void showAlbumInfo(const AlbumInfo& album);
+    void showInLibrary(const QString& album, const QString& albumArtist);
     void showSettingsDialog();
+    void addQuickSettings(QMenu* menu);
     void loadSettings();
     Fooyin::TrackList getAlbumTracks(const QString& album, const QString& albumArtist);
     int findAlbumCell(const QString& album, const QString& albumArtist) const;
@@ -94,6 +102,22 @@ private:
     QVector<QRect> m_coverPositions;
     QVector<int> m_currentGridIndices;
     QVector<int> m_albumOrder; // Pre-shuffled permutation of album indices
+
+    // Cover cache: maps album index -> scaled pixmap (avoids re-scaling every frame)
+    // CoverProvider handles the expensive MP3 decode + thumbnail cache; we only cache the scaling step.
+    static constexpr int MAX_CACHE_SIZE = 300;
+    QHash<int, QPixmap> m_scaledCache; // albumIndex -> scaled-to-cell-size pixmap
+    QHash<int, int> m_coverFadeProgress; // Fade-in progress per album (0-100)
+    QSize m_scaledCacheCellSize{0, 0}; // Cell size when scaled cache was built
+    qint64 m_placeholderCacheKey{0}; // For detecting placeholder returns
+    int m_lastSwappedCellA{-1}; // Avoid swapping back the same pair
+    int m_lastSwappedCellB{-1};
+    static constexpr int FADE_STEPS = 8; // Fade-in over 8 frames (~160ms at 20fps)
+    QTimer* m_fadeTimer{nullptr}; // Fade-in animation timer
+    void invalidateScaledCache();
+    QPixmap getCoverForPaint(int albumIndex, const QSize& cellSize, const Fooyin::ThumbnailSize& coverSize);
+    void updateVisibleThumbnailKeys();
+    void advanceFade();
 
     // Multi-cell animation support
     struct ActiveAnim {
@@ -128,6 +152,10 @@ private:
     enum class AnimScope { Single, Multiple, Wave };
     AnimScope m_animScope{AnimScope::Single};
 
+    // Sort mode
+    enum class SortMode { Random, Year, YearDesc, Rating, PlayCount, Recent };
+    SortMode m_sortMode{SortMode::Random};
+
     // Configurable options
     bool m_enableAnim{true};
     int m_animInterval{3000}; // milliseconds between animation triggers
@@ -137,4 +165,17 @@ private:
     QString m_genreFilter; // Genre filter (empty = all genres)
     QString m_artistFilter; // Artist filter (empty = all artists)
     QColor m_bgColor{Qt::black}; // Grid background color
+
+    // Inline sort bar
+    QComboBox* m_sortCombo{nullptr};
+    void onSortChanged();
+
+    // Fooyin styled ToolTip for cover hover (top-level)
+    Fooyin::ToolTip* m_toolTip{nullptr};
+
+    // WidgetContext for TrackSelectionController integration
+    Fooyin::WidgetContext* m_widgetContext{nullptr};
+
+    // TrackSorter for idiomatic Fooyin sorting
+    std::unique_ptr<Fooyin::TrackSorter> m_trackSorter;
 };
