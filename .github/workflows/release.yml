@@ -82,13 +82,16 @@ jobs:
           flatpak-builder --user --force-clean --disable-rofiles-fuse \
             --install-deps-from=flathub \
             flatpak-build packaging/flatpak/org.fooyin.fooyin.albummosaic.yaml
-          find flatpak-build/files -name 'fyplugin_albummosaicplugin.so'
+          # Stage the .so flat so the artifact zip contains just the file
+          SO=$(find flatpak-build/files -name 'fyplugin_albummosaicplugin.so' | head -1)
+          test -n "$SO"
+          mkdir -p flatpak-out && cp "$SO" flatpak-out/
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: plugin-flatpak
-          path: flatpak-build/files/lib*/fooyin/plugins/fyplugin_albummosaicplugin.so
+          path: flatpak-out/fyplugin_albummosaicplugin.so
           if-no-files-found: error
 
   # ─── Windows ───────────────────────────────────────────────────────────
