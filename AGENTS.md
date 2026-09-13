@@ -93,9 +93,15 @@ flatpak override --user org.fooyin.fooyin --filesystem=~/.local/lib/fooyin
 
 ### Plugin Settings
 
-- `AlbumMosaic/EnableFlip` (bool) — Enable/disable 3D flip animation
-- `AlbumMosaic/FlipInterval` (int, ms) — Flip animation interval
+Global defaults in `AlbumMosaic/*`; per-widget config is serialized in the layout via `saveLayoutData`/`loadLayoutData` and wins over these defaults.
+
+- `AlbumMosaic/EnableAnim` (bool) — Enable/disable cover-swap animation
+- `AlbumMosaic/AnimType` (string) — `Flip3D` (default), `Crossfade`, `Slide`, `Zoom`, `PageCurl`, `Random`
+- `AlbumMosaic/AnimSpeed` (string) — `Fast`, `Medium` (default), `Slow`
+- `AlbumMosaic/AnimScope` (string) — `Single` (default), `Multiple`, `Wave`
 - `AlbumMosaic/ColumnCount` (int) — Number of columns in the grid
+- `AlbumMosaic/SortMode` (string) — `Random` (default), `Year`, `YearDesc`, `Rating`, `PlayCount`, `Recent`
+- `AlbumMosaic/BgColor` (string) — Background color (hex)
 - `AlbumMosaic/GenreFilter` (string) — Filter albums by genre
 - `AlbumMosaic/ArtistFilter` (string) — Filter albums by artist
 

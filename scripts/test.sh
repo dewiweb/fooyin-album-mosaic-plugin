@@ -134,13 +134,23 @@ if [ "$TIMEOUT" -gt 0 ] || $MONITOR; then
 
     ELAPSED=0
     INTERVAL=5
+    PREV_JIFFIES=""
+    CLK_TCK=$(getconf CLK_TCK 2>/dev/null || echo 100)
     while kill -0 "$FOY_PID" 2>/dev/null; do
         sleep "$INTERVAL"
         ELAPSED=$((ELAPSED + INTERVAL))
 
         if $MONITOR; then
             RSS=$(ps -o rss= -p "$FOY_PID" 2>/dev/null | tr -d ' ' || echo "?")
-            CPU=$(ps -o %cpu= -p "$FOY_PID" 2>/dev/null | tr -d ' ' || echo "?")
+            # Instantaneous CPU%: delta of utime+stime jiffies over the interval
+            JIFFIES=$(awk '{print $14+$15}' /proc/"$FOY_PID"/stat 2>/dev/null || echo "")
+            if [ -n "$JIFFIES" ] && [ -n "$PREV_JIFFIES" ]; then
+                CPU=$(awk -v d="$((JIFFIES - PREV_JIFFIES))" -v t="$CLK_TCK" -v i="$INTERVAL" \
+                      'BEGIN{printf "%.1f", (d/t)/i*100}')
+            else
+                CPU="?"
+            fi
+            PREV_JIFFIES="$JIFFIES"
             echo "  [${ELAPSED}s] RSS: ${RSS} KB, CPU: ${CPU}%"
         fi
 
@@ -148,8 +158,7 @@ if [ "$TIMEOUT" -gt 0 ] || $MONITOR; then
             echo ""
             echo "=== Timeout reached (${TIMEOUT}s) — killing Fooyin ==="
             RSS=$(ps -o rss= -p "$FOY_PID" 2>/dev/null | tr -d ' ' || echo "?")
-            CPU=$(ps -o %cpu= -p "$FOY_PID" 2>/dev/null | tr -d ' ' || echo "?")
-            echo "  Final: RSS: ${RSS} KB, CPU: ${CPU}%"
+            echo "  Final: RSS: ${RSS} KB"
             break
         fi
     done

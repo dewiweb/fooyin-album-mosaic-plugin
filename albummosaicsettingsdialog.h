@@ -54,7 +54,6 @@ private:
     Fooyin::SettingsManager* m_settingsManager;
     Fooyin::MusicLibrary* m_library;
     QCheckBox* m_enableAnimCheckbox;
-    QSpinBox* m_animIntervalSpinBox;
     QSpinBox* m_columnCountSpinBox;
     QComboBox* m_genreComboBox;
     QComboBox* m_artistComboBox;

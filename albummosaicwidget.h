@@ -24,6 +24,7 @@
 #include <QPixmap>
 #include <QVector>
 #include <QHash>
+#include <QSet>
 #include <QRect>
 #include <QElapsedTimer>
 #include <QComboBox>
@@ -74,25 +75,42 @@ protected:
     void searchEvent(const Fooyin::SearchRequest& request) override;
     void saveLayoutData(QJsonObject& layout) override;
     void loadLayoutData(const QJsonObject& layout) override;
+    void finalise() override;
+    void openConfigDialog() override;
+    void layoutEditingMenu(QMenu* menu) override;
 
 private:
-    // Animation type (must be declared before methods that use it)
+    // Enums (declared first — methods and members below reference them)
     enum class AnimType { Flip3D, Crossfade, Slide, Zoom, PageCurl, Random };
+    enum class AnimSpeed { Fast, Medium, Slow };
+    enum class AnimScope { Single, Multiple, Wave };
+    enum class SortMode { Random, Year, YearDesc, Rating, PlayCount, Recent };
+
+    // Enum <-> settings key helpers (single source of truth for string mapping)
+    static QString animTypeKey(AnimType t);
+    static AnimType animTypeFromKey(const QString& s);
+    static QString animSpeedKey(AnimSpeed s);
+    static AnimSpeed animSpeedFromKey(const QString& s);
+    static QString animScopeKey(AnimScope s);
+    static AnimScope animScopeFromKey(const QString& s);
+    static QString sortModeKey(SortMode m);
+    static SortMode sortModeFromKey(const QString& s);
+    int animIntervalMs() const;
 
     void loadAlbumMetadata();
     void updateMosaic();
     void triggerAnimation();
+    void preloadCovers(int count);
+    QList<int> buildSwapCandidates(int maxCount, const QSet<int>& visibleAlbumIndices);
+    void skipAnimationBatch(const char* reason);
     void randomizeGrid();
-    void sortAlbums();
     AnimType effectiveAnimType() const;
     void playAlbum(const QString& album, const QString& albumArtist);
-    void queueAlbum(const QString& album, const QString& albumArtist);
     void showInLibrary(const QString& album, const QString& albumArtist);
     void showSettingsDialog();
     void addQuickSettings(QMenu* menu);
     void loadSettings();
     Fooyin::TrackList getAlbumTracks(const QString& album, const QString& albumArtist);
-    int findAlbumCell(const QString& album, const QString& albumArtist) const;
 
     Fooyin::GuiPluginContext* m_guiContext;
     Fooyin::CorePluginContext* m_coreContext;
@@ -100,22 +118,30 @@ private:
     QTimer* m_animTimer;
     QVector<AlbumInfo> m_albums;
     QHash<QString, Fooyin::TrackList> m_albumTracksCache; // Cache: "album|artist" -> tracks
+    QHash<QString, int> m_albumKeyToIndex; // "album|artist" -> index in m_albums (O(1) coverAdded lookup)
     QVector<QRect> m_coverPositions;
     QVector<int> m_currentGridIndices;
     QVector<int> m_albumOrder; // Pre-shuffled permutation of album indices
 
     // Cover cache: maps album index -> scaled pixmap (avoids re-scaling every frame)
     // CoverProvider handles the expensive MP3 decode + thumbnail cache; we only cache the scaling step.
-    static constexpr int MAX_CACHE_SIZE = 300;
+    static constexpr int MAX_CACHE_SIZE = 150; // Base, multiplied by visible count at runtime
     QHash<int, QPixmap> m_scaledCache; // albumIndex -> scaled-to-cell-size pixmap
     QHash<int, int> m_coverFadeProgress; // Fade-in progress per album (0-100)
     QSize m_scaledCacheCellSize{0, 0}; // Cell size when scaled cache was built
     qint64 m_placeholderCacheKey{0}; // For detecting placeholder returns
-    int m_lastSwappedCellA{-1}; // Avoid swapping back the same pair
-    int m_lastSwappedCellB{-1};
+    QSet<int> m_recentSwappedAlbums; // Avoid swapping back recent albums (anti-flicker)
+    QList<int> m_recentSwappedQueue; // FIFO order for bounded eviction of m_recentSwappedAlbums
+    static constexpr int MAX_RECENT_SWAPPED = 64; // ~1 full wave batch stays protected
+    void markAlbumSwapped(int albumIndex);
+    QSet<int> m_pendingPreload; // Albums with an async cover load in flight from the preload loop
+    bool m_animRetryPending{false}; // A short retry singleShot is already scheduled after a skipped batch
+    int m_consecutiveSkips{0}; // For throttling the skipped-batch diagnostic log
     static constexpr int FADE_STEPS = 8; // Fade-in over 8 frames (~160ms at 20fps)
     QTimer* m_fadeTimer{nullptr}; // Fade-in animation timer
     QTimer* m_toolTipTimer{nullptr}; // Delay before hiding tooltip
+    QTimer* m_resizeTimer{nullptr}; // Debounce for resize-triggered cache invalidation
+    QTimer* m_searchTimer{nullptr}; // Debounce for search-triggered metadata reload
     void invalidateScaledCache();
     QPixmap getCoverForPaint(int albumIndex, const QSize& cellSize, const Fooyin::ThumbnailSize& coverSize);
     void updateVisibleThumbnailKeys();
@@ -140,30 +166,20 @@ private:
     // Currently playing album highlight
     QString m_currentPlayingAlbum;
     QString m_currentPlayingArtist;
+    int m_playingAlbumIndex{-1}; // Pre-resolved index into m_albums (-1 = not playing/unknown)
 
     // Search filter
     QString m_searchQuery;
 
     AnimType m_animType{AnimType::Flip3D};
-
-    // Animation speed
-    enum class AnimSpeed { Fast, Medium, Slow };
     AnimSpeed m_animSpeed{AnimSpeed::Medium};
-
-    // Animation scope (how many cells animate at once)
-    enum class AnimScope { Single, Multiple, Wave };
     AnimScope m_animScope{AnimScope::Single};
-
-    // Sort mode
-    enum class SortMode { Random, Year, YearDesc, Rating, PlayCount, Recent };
     SortMode m_sortMode{SortMode::Random};
 
     // Configurable options
     bool m_enableAnim{true};
-    int m_animInterval{3000}; // milliseconds between animation triggers
     int m_columnCount{10};
     int m_hoveredCellIndex{-1}; // Currently hovered cell
-    int m_rightClickedCellIndex{-1}; // Currently right-clicked cell
     QString m_genreFilter; // Genre filter (empty = all genres)
     QString m_artistFilter; // Artist filter (empty = all artists)
     QColor m_bgColor{Qt::black}; // Grid background color

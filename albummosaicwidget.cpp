@@ -51,6 +51,99 @@
 #include <core/plugins/coreplugincontext.h>
 #include <utils/settings/settingsmanager.h>
 
+QString AlbumMosaicWidget::animTypeKey(AnimType t)
+{
+    switch(t) {
+        case AnimType::Crossfade: return QStringLiteral("Crossfade");
+        case AnimType::Slide:     return QStringLiteral("Slide");
+        case AnimType::Zoom:      return QStringLiteral("Zoom");
+        case AnimType::PageCurl:  return QStringLiteral("PageCurl");
+        case AnimType::Random:    return QStringLiteral("Random");
+        default:                  return QStringLiteral("Flip3D");
+    }
+}
+
+AlbumMosaicWidget::AnimType AlbumMosaicWidget::animTypeFromKey(const QString& s)
+{
+    if(s == QLatin1String("Crossfade")) return AnimType::Crossfade;
+    if(s == QLatin1String("Slide"))     return AnimType::Slide;
+    if(s == QLatin1String("Zoom"))      return AnimType::Zoom;
+    if(s == QLatin1String("PageCurl"))  return AnimType::PageCurl;
+    if(s == QLatin1String("Random"))    return AnimType::Random;
+    return AnimType::Flip3D;
+}
+
+QString AlbumMosaicWidget::animSpeedKey(AnimSpeed s)
+{
+    switch(s) {
+        case AnimSpeed::Fast: return QStringLiteral("Fast");
+        case AnimSpeed::Slow: return QStringLiteral("Slow");
+        default:              return QStringLiteral("Medium");
+    }
+}
+
+AlbumMosaicWidget::AnimSpeed AlbumMosaicWidget::animSpeedFromKey(const QString& s)
+{
+    if(s == QLatin1String("Fast")) return AnimSpeed::Fast;
+    if(s == QLatin1String("Slow")) return AnimSpeed::Slow;
+    return AnimSpeed::Medium;
+}
+
+QString AlbumMosaicWidget::animScopeKey(AnimScope s)
+{
+    switch(s) {
+        case AnimScope::Multiple: return QStringLiteral("Multiple");
+        case AnimScope::Wave:     return QStringLiteral("Wave");
+        default:                  return QStringLiteral("Single");
+    }
+}
+
+AlbumMosaicWidget::AnimScope AlbumMosaicWidget::animScopeFromKey(const QString& s)
+{
+    if(s == QLatin1String("Multiple")) return AnimScope::Multiple;
+    if(s == QLatin1String("Wave"))     return AnimScope::Wave;
+    return AnimScope::Single;
+}
+
+QString AlbumMosaicWidget::sortModeKey(SortMode m)
+{
+    switch(m) {
+        case SortMode::Year:      return QStringLiteral("Year");
+        case SortMode::YearDesc:  return QStringLiteral("YearDesc");
+        case SortMode::Rating:    return QStringLiteral("Rating");
+        case SortMode::PlayCount: return QStringLiteral("PlayCount");
+        case SortMode::Recent:    return QStringLiteral("Recent");
+        default:                  return QStringLiteral("Random");
+    }
+}
+
+AlbumMosaicWidget::SortMode AlbumMosaicWidget::sortModeFromKey(const QString& s)
+{
+    if(s == QLatin1String("Year"))      return SortMode::Year;
+    if(s == QLatin1String("YearDesc"))  return SortMode::YearDesc;
+    if(s == QLatin1String("Rating"))    return SortMode::Rating;
+    if(s == QLatin1String("PlayCount")) return SortMode::PlayCount;
+    if(s == QLatin1String("Recent"))    return SortMode::Recent;
+    return SortMode::Random;
+}
+
+// Interval between animation batches: speed base × scope factor.
+// More simultaneous animations = longer pause to reduce CPU.
+int AlbumMosaicWidget::animIntervalMs() const
+{
+    int base = 3000;
+    switch(m_animSpeed) {
+        case AnimSpeed::Fast: base = 1500; break;
+        case AnimSpeed::Slow: base = 6000; break;
+        default: break;
+    }
+    switch(m_animScope) {
+        case AnimScope::Multiple: return static_cast<int>(base * 1.5);
+        case AnimScope::Wave:     return base * 2;
+        default:                  return base;
+    }
+}
+
 AlbumMosaicWidget::AlbumMosaicWidget(Fooyin::GuiPluginContext* guiContext, Fooyin::CorePluginContext* coreContext, Fooyin::CoverProvider* coverProvider, QWidget* parent)
     : FyWidget{parent}
     , m_guiContext{guiContext}
@@ -59,51 +152,25 @@ AlbumMosaicWidget::AlbumMosaicWidget(Fooyin::GuiPluginContext* guiContext, Fooyi
     , m_animTimer{new QTimer(this)}
 {
     if(m_coreContext && m_coreContext->settingsManager) {
-        m_enableAnim = m_coreContext->settingsManager->value(QStringLiteral("AlbumMosaic/EnableAnim")).toBool();
-        m_animInterval = m_coreContext->settingsManager->value(QStringLiteral("AlbumMosaic/AnimInterval")).toInt();
-        m_columnCount = m_coreContext->settingsManager->value(QStringLiteral("AlbumMosaic/ColumnCount")).toInt();
-        m_genreFilter = m_coreContext->settingsManager->value(QStringLiteral("AlbumMosaic/GenreFilter")).toString();
-        m_artistFilter = m_coreContext->settingsManager->value(QStringLiteral("AlbumMosaic/ArtistFilter")).toString();
-
-        // Load animation type
-        const QString animTypeStr = m_coreContext->settingsManager->value(QStringLiteral("AlbumMosaic/AnimType")).toString();
-        if(animTypeStr == "Crossfade") m_animType = AnimType::Crossfade;
-        else if(animTypeStr == "Slide") m_animType = AnimType::Slide;
-        else if(animTypeStr == "Zoom") m_animType = AnimType::Zoom;
-        else if(animTypeStr == "PageCurl") m_animType = AnimType::PageCurl;
-        else if(animTypeStr == "Random") m_animType = AnimType::Random;
-        else m_animType = AnimType::Flip3D;
-
-        // Load animation speed
-        const QString speedStr = m_coreContext->settingsManager->value(QStringLiteral("AlbumMosaic/AnimSpeed")).toString();
-        if(speedStr == "Fast") m_animSpeed = AnimSpeed::Fast;
-        else if(speedStr == "Slow") m_animSpeed = AnimSpeed::Slow;
-        else m_animSpeed = AnimSpeed::Medium;
-
-        // Load animation scope
-        const QString scopeStr = m_coreContext->settingsManager->value(QStringLiteral("AlbumMosaic/AnimScope")).toString();
-        if(scopeStr == "Multiple") m_animScope = AnimScope::Multiple;
-        else if(scopeStr == "Wave") m_animScope = AnimScope::Wave;
-        else m_animScope = AnimScope::Single;
-
-        // Load background color
-        m_bgColor = QColor(m_coreContext->settingsManager->value(QStringLiteral("AlbumMosaic/BgColor")).toString());
+        auto* settings = m_coreContext->settingsManager;
+        m_enableAnim = settings->value(QStringLiteral("AlbumMosaic/EnableAnim")).toBool();
+        m_columnCount = settings->value(QStringLiteral("AlbumMosaic/ColumnCount")).toInt();
+        m_genreFilter = settings->value(QStringLiteral("AlbumMosaic/GenreFilter")).toString();
+        m_artistFilter = settings->value(QStringLiteral("AlbumMosaic/ArtistFilter")).toString();
+        m_animType = animTypeFromKey(settings->value(QStringLiteral("AlbumMosaic/AnimType")).toString());
+        m_animSpeed = animSpeedFromKey(settings->value(QStringLiteral("AlbumMosaic/AnimSpeed")).toString());
+        m_animScope = animScopeFromKey(settings->value(QStringLiteral("AlbumMosaic/AnimScope")).toString());
+        m_sortMode = sortModeFromKey(settings->value(QStringLiteral("AlbumMosaic/SortMode")).toString());
+        m_bgColor = QColor(settings->value(QStringLiteral("AlbumMosaic/BgColor")).toString());
         if(!m_bgColor.isValid()) m_bgColor = Qt::black;
-
-        // Load sort mode
-        const QString sortStr = m_coreContext->settingsManager->value(QStringLiteral("AlbumMosaic/SortMode")).toString();
-        if(sortStr == "Year") m_sortMode = SortMode::Year;
-        else if(sortStr == "YearDesc") m_sortMode = SortMode::YearDesc;
-        else if(sortStr == "Rating") m_sortMode = SortMode::Rating;
-        else if(sortStr == "PlayCount") m_sortMode = SortMode::PlayCount;
-        else if(sortStr == "Recent") m_sortMode = SortMode::Recent;
-        else m_sortMode = SortMode::Random;
     }
 
     setMouseTracking(true);
+    // Allow Fooyin's SearchBar to connect to this widget and send search events
+    setFeature(FyWidget::Search);
     connect(m_animTimer, &QTimer::timeout, this, &AlbumMosaicWidget::triggerAnimation);
     if(m_enableAnim) {
-        m_animTimer->start(m_animInterval);
+        m_animTimer->start(animIntervalMs());
     }
 
     // Store placeholder cache key for cover comparison
@@ -124,8 +191,8 @@ AlbumMosaicWidget::AlbumMosaicWidget(Fooyin::GuiPluginContext* guiContext, Fooyi
         if(m_toolTip) m_toolTip->hide();
     });
 
-    // Fooyin styled ToolTip — top-level so it's not clipped by widget bounds
-    m_toolTip = new Fooyin::ToolTip(nullptr);
+    // Fooyin styled ToolTip — parented to this widget so it is destroyed with it
+    m_toolTip = new Fooyin::ToolTip(this);
     m_toolTip->setWindowFlags(Qt::ToolTip | Qt::FramelessWindowHint);
     // Semi-transparent dark style: black bg at 50% opacity, white text, subtle border
     QPalette tipPalette = m_toolTip->palette();
@@ -182,6 +249,10 @@ AlbumMosaicWidget::AlbumMosaicWidget(Fooyin::GuiPluginContext* guiContext, Fooyi
         connect(m_coreContext->playerController, &Fooyin::PlayerController::currentTrackChanged, this, [this](const Fooyin::Track& track) {
             m_currentPlayingAlbum = track.album();
             m_currentPlayingArtist = track.albumArtist();
+            // Pre-resolve the album index once — avoids 2 QString compares
+            // per visible cell per repaint.
+            m_playingAlbumIndex = m_albumKeyToIndex.value(
+                m_currentPlayingAlbum + "|" + m_currentPlayingArtist, -1);
             update();
         });
     }
@@ -228,6 +299,9 @@ void AlbumMosaicWidget::loadAlbumMetadata()
 
     m_albums.clear();
     m_albumTracksCache.clear();
+    m_albumKeyToIndex.clear();
+    m_pendingPreload.clear(); // Album indices are about to become invalid
+    m_activeAnims.clear();    // Active anims hold order/cell indices into the old set
     QSet<QString> uniqueAlbums;
 
     for(const Fooyin::Track& track : tracks) {
@@ -299,24 +373,44 @@ void AlbumMosaicWidget::loadAlbumMetadata()
         updateMosaic();
     }
 
+    // Rebuild albumKey->index map AFTER the shuffle (indices moved)
+    m_albumKeyToIndex.clear();
+    m_albumKeyToIndex.reserve(m_albums.size());
+    for(int i = 0; i < m_albums.size(); ++i) {
+        m_albumKeyToIndex.insert(m_albums[i].album + "|" + m_albums[i].albumArtist, i);
+    }
+    // Re-resolve the playing album index against the rebuilt map
+    m_playingAlbumIndex = m_albumKeyToIndex.value(
+        m_currentPlayingAlbum + "|" + m_currentPlayingArtist, -1);
+
     // Bug 2: Disconnect before reconnect to avoid signal leak
     if(m_coverProvider) {
         disconnect(m_coverProvider, &Fooyin::CoverProvider::coverAdded, this, nullptr);
         connect(m_coverProvider, &Fooyin::CoverProvider::coverAdded, this, [this](const Fooyin::Track& track) {
-            // Clear scaled cache for this track's album so it gets re-fetched at next paint
-            for(int i = 0; i < m_albums.size(); ++i) {
-                const AlbumInfo& album = m_albums[i];
-                if(album.track.isValid() && album.track.id() == track.id()) {
-                    m_scaledCache.remove(i);
-                    // Start fade-in from 0
-                    m_coverFadeProgress[i] = 0;
+            // O(1) lookup via albumKey — avoids scanning all albums per cover
+            const QString albumKey = track.album() + "|" + track.albumArtist();
+            const int albumIndex = m_albumKeyToIndex.value(albumKey, -1);
+            if(albumIndex >= 0) {
+                m_scaledCache.remove(albumIndex);
+                // If this cover was requested by the animation preload, put it
+                // into the scaled cache now. Otherwise the swap-candidate pool
+                // stays empty until the user scrolls (preloaded albums are
+                // never painted, so getCoverForPaint is never re-called).
+                if(m_pendingPreload.remove(albumIndex) && !m_coverPositions.isEmpty()) {
+                    const QSize cellSize = m_coverPositions[0].size();
+                    const auto coverSize = Fooyin::CoverProvider::findThumbnailSize(cellSize);
+                    getCoverForPaint(albumIndex, cellSize, coverSize);
+                }
+                // Fade-in only for visible covers — during the initial scan,
+                // coverAdded fires for hundreds of off-screen albums.
+                if(m_currentGridIndices.contains(albumIndex)) {
+                    m_coverFadeProgress[albumIndex] = 0;
                     if(m_fadeTimer && !m_fadeTimer->isActive()) {
                         m_fadeTimer->start();
                     }
-                    break;
                 }
+                update();
             }
-            update();
         });
     }
 }
@@ -428,6 +522,116 @@ AlbumMosaicWidget::AnimType AlbumMosaicWidget::effectiveAnimType() const
     return types[QRandomGenerator::global()->bounded(5)];
 }
 
+void AlbumMosaicWidget::markAlbumSwapped(int albumIndex)
+{
+    // Bounded FIFO: evict the oldest entry once full. The previous code let
+    // this set grow unbounded in Multiple/Wave scopes — after ~10 batches it
+    // excluded most of the cache and the candidate pool collapsed to <2,
+    // silently starving all future animation batches.
+    if(m_recentSwappedAlbums.contains(albumIndex)) {
+        return;
+    }
+    m_recentSwappedAlbums.insert(albumIndex);
+    m_recentSwappedQueue.append(albumIndex);
+    while(m_recentSwappedQueue.size() > MAX_RECENT_SWAPPED) {
+        m_recentSwappedAlbums.remove(m_recentSwappedQueue.takeFirst());
+    }
+}
+
+QList<int> AlbumMosaicWidget::buildSwapCandidates(int maxCount, const QSet<int>& visibleAlbumIndices)
+{
+    // Random-sample order positions and keep those whose cover the provider
+    // can already serve (scaledCache hit OR repository thumbnail ready).
+    // Probing getCoverForPaint doubles as preloading: misses are tracked in
+    // m_pendingPreload so coverAdded turns them into future candidates.
+    QList<int> candidates;
+    if(!m_coverProvider || m_coverPositions.isEmpty() || m_albumOrder.isEmpty()) {
+        return candidates;
+    }
+    const QSize cellSize = m_coverPositions[0].size();
+    const auto coverSize = Fooyin::CoverProvider::findThumbnailSize(cellSize);
+    const int orderSize = static_cast<int>(m_albumOrder.size());
+    const int samples = std::min(orderSize, std::max(96, maxCount * 4));
+    QSet<int> seen;
+    for(int s = 0; s < samples && candidates.size() < maxCount; ++s) {
+        const int i = QRandomGenerator::global()->bounded(orderSize);
+        if(seen.contains(i)) {
+            continue;
+        }
+        seen.insert(i);
+        const int albumIdx = m_albumOrder[i];
+        if(albumIdx < 0 || albumIdx >= m_albums.size()
+           || m_recentSwappedAlbums.contains(albumIdx)
+           || visibleAlbumIndices.contains(albumIdx)) {
+            continue;
+        }
+        const QPixmap px = getCoverForPaint(albumIdx, cellSize, coverSize);
+        if(!px.isNull()) {
+            candidates.append(i);
+        } else {
+            m_pendingPreload.insert(albumIdx);
+            if(m_pendingPreload.size() > 60) {
+                m_pendingPreload.clear();
+            }
+        }
+    }
+    return candidates;
+}
+
+void AlbumMosaicWidget::preloadCovers(int count)
+{
+    // Request random non-visible covers so the swap-candidate pool grows
+    // beyond the currently visible cells. Async loads are tracked in
+    // m_pendingPreload — coverAdded inserts the finished cover into the cache.
+    if(!m_coverProvider || m_coverPositions.isEmpty() || m_albumOrder.isEmpty()) {
+        return;
+    }
+    const QSize cellSize = m_coverPositions[0].size();
+    const auto preloadSize = Fooyin::CoverProvider::findThumbnailSize(cellSize);
+    for(int i = 0; i < count; ++i) {
+        const int randomAlbumIdx = QRandomGenerator::global()->bounded(m_albumOrder.size());
+        const int albumIdx = m_albumOrder[randomAlbumIdx];
+        if(albumIdx >= 0 && albumIdx < m_albums.size() && !m_scaledCache.contains(albumIdx)
+           && !m_pendingPreload.contains(albumIdx)) {
+            const QPixmap px = getCoverForPaint(albumIdx, cellSize, preloadSize);
+            if(px.isNull()) {
+                m_pendingPreload.insert(albumIdx);
+                if(m_pendingPreload.size() > 60) {
+                    m_pendingPreload.clear(); // bound the set; stragglers get re-requested
+                }
+            }
+        }
+    }
+}
+
+void AlbumMosaicWidget::skipAnimationBatch(const char* reason)
+{
+    // A skipped batch is invisible to the user — log why and retry sooner than
+    // the full animation interval so animations start as soon as covers land
+    // in the cache (previously, a cold cache meant silent skips forever).
+    m_consecutiveSkips++;
+    if(m_consecutiveSkips <= 3 || m_consecutiveSkips % 10 == 0) {
+        qDebug() << "[AlbumMosaic] animation batch skipped (x" << m_consecutiveSkips << "):" << reason
+                 << "| cache:" << m_scaledCache.size()
+                 << "visible:" << m_currentGridIndices.size()
+                 << "pending:" << m_pendingPreload.size()
+                 << "recent:" << m_recentSwappedAlbums.size();
+    }
+    // Starving: burst-preload now instead of waiting for the next batch —
+    // resizes can shrink adaptiveMax and evict the non-visible pool, so we
+    // must actively rebuild it or the retry loop starves forever.
+    preloadCovers(8);
+    if(!m_animRetryPending) {
+        m_animRetryPending = true;
+        QTimer::singleShot(1000, this, [this]() {
+            m_animRetryPending = false;
+            if(m_enableAnim && m_activeAnims.isEmpty()) {
+                triggerAnimation();
+            }
+        });
+    }
+}
+
 void AlbumMosaicWidget::triggerAnimation()
 {
     if(m_coverPositions.isEmpty() || m_albumOrder.isEmpty() || !m_coverProvider) {
@@ -437,9 +641,9 @@ void AlbumMosaicWidget::triggerAnimation()
     // Duration based on speed setting
     const int durationMs = [this]() {
         switch(m_animSpeed) {
-            case AnimSpeed::Fast: return 300;
-            case AnimSpeed::Slow: return 1000;
-            default: return 600;
+            case AnimSpeed::Fast: return 250;
+            case AnimSpeed::Slow: return 2000;
+            default: return 800;
         }
     }();
 
@@ -448,10 +652,48 @@ void AlbumMosaicWidget::triggerAnimation()
 
     // Start new animations if none are active (timer-triggered)
     if(m_activeAnims.isEmpty()) {
+        // Do NOT clear recent swaps here — we want to prevent the previous
+        // batch's albums from being swapped back (which would undo the animation)
         const int numCells = m_coverPositions.size();
 
+        // Pre-load random covers into scaledCache to expand the pool of
+        // swappable albums beyond just the currently visible ones.
+        // Adaptive: more preload when few visible covers (zoomed in),
+        // less when many visible (zoomed out) to limit memory.
+        {
+            const int visibleCount = m_currentGridIndices.size();
+            const int adaptiveMax = std::max(MAX_CACHE_SIZE, visibleCount * 3 / 2);
+            const int headroom = adaptiveMax - m_scaledCache.size();
+            preloadCovers(std::min(10, std::max(3, headroom / 3)));
+        }
+
+        // Safety net: verify m_albumOrder is still a valid permutation.
+        // Past corruption (from duplicate swap targets) persists until regenerated.
+        {
+            QSet<int> seen;
+            bool corrupted = false;
+            for(int idx : m_albumOrder) {
+                if(idx < 0 || idx >= m_albums.size() || seen.contains(idx)) {
+                    corrupted = true;
+                    break;
+                }
+                seen.insert(idx);
+            }
+            if(corrupted) {
+                qWarning() << "[AlbumMosaic] m_albumOrder corrupted, regenerating";
+                randomizeGrid();
+                return;
+            }
+        }
+
+        // Build set of currently visible album indices to avoid duplicates
+        QSet<int> visibleAlbumIndices;
+        for(int idx : m_currentGridIndices) {
+            visibleAlbumIndices.insert(idx);
+        }
+
         if(m_animScope == AnimScope::Single) {
-            // Single cell animation (original behavior)
+            // Single cell animation — only swap with albums whose cover is ready
             ActiveAnim anim;
             anim.cellIndex = QRandomGenerator::global()->bounded(numCells);
             const int row = anim.cellIndex / cols;
@@ -460,27 +702,32 @@ void AlbumMosaicWidget::triggerAnimation()
             anim.orderIndex = ((globalIndex % m_albumOrder.size()) + m_albumOrder.size()) % m_albumOrder.size();
             anim.oldAlbumIndex = m_albumOrder[anim.orderIndex];
 
-            int swapWith = QRandomGenerator::global()->bounded(m_albumOrder.size());
-            while(m_albumOrder.size() > 1 && (swapWith == anim.orderIndex
-                   || m_albumOrder[swapWith] == m_lastSwappedCellA
-                   || m_albumOrder[swapWith] == m_lastSwappedCellB)) {
-                swapWith = QRandomGenerator::global()->bounded(m_albumOrder.size());
+            QList<int> cachedAlbums = buildSwapCandidates(32, visibleAlbumIndices);
+            if(cachedAlbums.isEmpty()) {
+                skipAnimationBatch("single: no ready candidates");
+                return;
             }
+
+            // Pick a swap target from cached albums only
+            int swapWith = cachedAlbums[QRandomGenerator::global()->bounded(cachedAlbums.size())];
             anim.newAlbumIndex = m_albumOrder[swapWith];
             anim.swapWithOrderIndex = swapWith;
-            m_lastSwappedCellA = anim.oldAlbumIndex;
-            m_lastSwappedCellB = anim.newAlbumIndex;
+            markAlbumSwapped(anim.oldAlbumIndex);
+            markAlbumSwapped(anim.newAlbumIndex);
 
-            // Pre-load the new album cover (cached, non-blocking if already cached)
-            if(anim.newAlbumIndex >= 0 && anim.newAlbumIndex < m_albums.size()) {
-                getCoverForPaint(anim.newAlbumIndex, m_coverPositions[0].size(), coverSize);
-            }
             anim.animType = effectiveAnimType();
             anim.elapsed.start();
             m_activeAnims.append(anim);
         } else if(m_animScope == AnimScope::Multiple) {
             // Multiple random cells animate simultaneously (max 5 to limit CPU/GPU)
-            const int numToAnimate = std::min(5, numCells);
+            // Only swap with albums whose cover is ready and not visible
+            QList<int> cachedAlbums = buildSwapCandidates(32, visibleAlbumIndices);
+            if(cachedAlbums.size() < 2) {
+                skipAnimationBatch("multiple: <2 ready candidates");
+                return;
+            }
+
+            const int numToAnimate = std::min({5, numCells, static_cast<int>(cachedAlbums.size())});
             QSet<int> usedCells;
             QSet<int> usedOrders;
             for(int i = 0; i < numToAnimate; ++i) {
@@ -503,67 +750,85 @@ void AlbumMosaicWidget::triggerAnimation()
                 anim.orderIndex = ((globalIndex % m_albumOrder.size()) + m_albumOrder.size()) % m_albumOrder.size();
                 anim.oldAlbumIndex = m_albumOrder[anim.orderIndex];
 
-                int swapWith = QRandomGenerator::global()->bounded(m_albumOrder.size());
-                while(m_albumOrder.size() > 1 && (swapWith == anim.orderIndex || usedOrders.contains(swapWith)
-                       || m_albumOrder[swapWith] == m_lastSwappedCellA
-                       || m_albumOrder[swapWith] == m_lastSwappedCellB)) {
-                    swapWith = QRandomGenerator::global()->bounded(m_albumOrder.size());
+                // Pick from cached albums only
+                int swapWith = cachedAlbums[QRandomGenerator::global()->bounded(cachedAlbums.size())];
+                int swapAttempts = 0;
+                while((swapWith == anim.orderIndex || usedOrders.contains(swapWith)) && swapAttempts < 20) {
+                    swapWith = cachedAlbums[QRandomGenerator::global()->bounded(cachedAlbums.size())];
+                    swapAttempts++;
                 }
+                if(swapWith == anim.orderIndex || usedOrders.contains(swapWith)) continue;
                 usedOrders.insert(swapWith);
                 anim.newAlbumIndex = m_albumOrder[swapWith];
                 anim.swapWithOrderIndex = swapWith;
-                m_lastSwappedCellA = anim.oldAlbumIndex;
-                m_lastSwappedCellB = anim.newAlbumIndex;
+                markAlbumSwapped(anim.oldAlbumIndex);
+                markAlbumSwapped(anim.newAlbumIndex);
 
-                if(anim.newAlbumIndex >= 0 && anim.newAlbumIndex < m_albums.size()) {
-                    getCoverForPaint(anim.newAlbumIndex, m_coverPositions[0].size(), coverSize);
-                }
                 anim.animType = effectiveAnimType();
-            anim.elapsed.start();
+                anim.elapsed.start();
                 m_activeAnims.append(anim);
             }
         } else if(m_animScope == AnimScope::Wave) {
-            // Wave: animate one cell per column, sweeping left to right
-            // All columns participate; the delay is spread across a fixed total
-            // window so it stays reasonable regardless of column count.
-            const int numCols = cols; // Use all columns
-            const int waveTotalDelayMs = 800; // Total spread across the wave
-            const int perColDelay = numCols > 1 ? waveTotalDelayMs / (numCols - 1) : 0;
-            for(int col = 0; col < numCols; ++col) {
-                // Pick one random row per column
-                const int visibleRows = m_coverPositions.size() / cols;
-                if(visibleRows <= 0) continue;
-                const int row = QRandomGenerator::global()->bounded(visibleRows);
-                const int cell = row * cols + col;
-                if(cell >= m_coverPositions.size()) continue;
+            // Wave: animate a few cells per column with a diagonal delay
+            // Only swap with albums whose cover is ready and not visible
+            QList<int> cachedAlbums = buildSwapCandidates(64, visibleAlbumIndices);
+            if(cachedAlbums.size() < 2) {
+                skipAnimationBatch("wave: <2 ready candidates");
+                return;
+            }
 
-                ActiveAnim anim;
-                anim.cellIndex = cell;
-                anim.delayMs = col * perColDelay; // Wave delay: spread across fixed window
+            const int numCols = cols;
+            const int visibleRows = m_coverPositions.size() / cols;
+            if(visibleRows > 0 && numCols > 0) {
+                const int waveTotalDelayMs = 1500;
+                const int perColDelay = numCols > 1 ? waveTotalDelayMs / (numCols - 1) : 0;
+                const int cellsPerCol = std::min(2, visibleRows);
+                // Prevent duplicate cells and duplicate swap targets within the batch.
+                // Without these, two anims can target the same m_albumOrder position
+                // and permanently corrupt the permutation (duplicates + lost albums).
+                QSet<int> usedCells;
+                QSet<int> usedOrders;
+                for(int col = 0; col < numCols; ++col) {
+                    for(int i = 0; i < cellsPerCol; ++i) {
+                        const int row = QRandomGenerator::global()->bounded(visibleRows);
+                        const int cell = row * cols + col;
+                        if(cell >= m_coverPositions.size() || usedCells.contains(cell)) continue;
+                        usedCells.insert(cell);
 
-                const int globalIndex = (row + m_scrollOffset) * cols + col;
-                anim.orderIndex = ((globalIndex % m_albumOrder.size()) + m_albumOrder.size()) % m_albumOrder.size();
-                anim.oldAlbumIndex = m_albumOrder[anim.orderIndex];
+                        ActiveAnim anim;
+                        anim.cellIndex = cell;
+                        anim.delayMs = col * perColDelay + (row % 3) * 50;
 
-                int swapWith = QRandomGenerator::global()->bounded(m_albumOrder.size());
-                while(m_albumOrder.size() > 1 && (swapWith == anim.orderIndex
-                       || m_albumOrder[swapWith] == m_lastSwappedCellA
-                       || m_albumOrder[swapWith] == m_lastSwappedCellB)) {
-                    swapWith = QRandomGenerator::global()->bounded(m_albumOrder.size());
+                        const int globalIndex = (row + m_scrollOffset) * cols + col;
+                        anim.orderIndex = ((globalIndex % m_albumOrder.size()) + m_albumOrder.size()) % m_albumOrder.size();
+                        anim.oldAlbumIndex = m_albumOrder[anim.orderIndex];
+
+                        // Pick from cached albums only, no duplicate swap targets
+                        int swapWith = cachedAlbums[QRandomGenerator::global()->bounded(cachedAlbums.size())];
+                        int swapAttempts = 0;
+                        while((swapWith == anim.orderIndex || usedOrders.contains(swapWith)) && swapAttempts < 20) {
+                            swapWith = cachedAlbums[QRandomGenerator::global()->bounded(cachedAlbums.size())];
+                            swapAttempts++;
+                        }
+                        if(swapWith == anim.orderIndex || usedOrders.contains(swapWith)) continue;
+                        usedOrders.insert(swapWith);
+                        anim.newAlbumIndex = m_albumOrder[swapWith];
+                        anim.swapWithOrderIndex = swapWith;
+                        markAlbumSwapped(anim.oldAlbumIndex);
+                        markAlbumSwapped(anim.newAlbumIndex);
+
+                        anim.animType = effectiveAnimType();
+                        anim.elapsed.start();
+                        m_activeAnims.append(anim);
+                    }
                 }
-                anim.newAlbumIndex = m_albumOrder[swapWith];
-                anim.swapWithOrderIndex = swapWith;
-                m_lastSwappedCellA = anim.oldAlbumIndex;
-                m_lastSwappedCellB = anim.newAlbumIndex;
-
-                if(anim.newAlbumIndex >= 0 && anim.newAlbumIndex < m_albums.size()) {
-                    getCoverForPaint(anim.newAlbumIndex, m_coverPositions[0].size(), coverSize);
-                }
-                anim.animType = effectiveAnimType();
-            anim.elapsed.start();
-                m_activeAnims.append(anim);
             }
         }
+    }
+
+    // A batch produced animations — reset the skip counter for the log throttle
+    if(!m_activeAnims.isEmpty()) {
+        m_consecutiveSkips = 0;
     }
 
     // Update all active animations
@@ -577,22 +842,36 @@ void AlbumMosaicWidget::triggerAnimation()
         float t = std::min(1.0f, static_cast<float>(elapsed) / static_cast<float>(durationMs));
         float progress = t < 0.5f ? 4.0f * t * t * t : 1.0f - std::pow(-2.0f * t + 2.0f, 3.0f) / 2.0f;
 
-        // At 50%: check if the new cover is ready. If yes, swap m_albumOrder.
+        // At 50%: swap m_albumOrder. Cover is guaranteed to be in scaledCache
+        // because we only pick swap targets from cached albums.
         if(progress >= 0.5f && !anim.newCoverReady && anim.newAlbumIndex >= 0 && anim.newAlbumIndex < m_albums.size()) {
-            const AlbumInfo& newAlbum = m_albums[anim.newAlbumIndex];
-            if(newAlbum.track.isValid()) {
-                // Check if cover is already cached (non-blocking)
-                if(m_scaledCache.contains(anim.newAlbumIndex)) {
-                    anim.newCoverReady = true;
-                    if(anim.swapWithOrderIndex >= 0 && anim.swapWithOrderIndex < m_albumOrder.size()) {
-                        m_albumOrder[anim.orderIndex] = anim.newAlbumIndex;
-                        m_albumOrder[anim.swapWithOrderIndex] = anim.oldAlbumIndex;
-                    }
-                    if(anim.cellIndex < m_currentGridIndices.size()) {
-                        m_currentGridIndices[anim.cellIndex] = anim.newAlbumIndex;
-                    }
-                }
-                // If not cached, request async — newCoverReady stays false until loaded
+            // Defensive check: only swap if m_albumOrder still holds the expected
+            // values. If another anim touched these positions, cancel this anim
+            // entirely to avoid corrupting the permutation (permanent duplicates).
+            const bool orderValid = anim.orderIndex >= 0 && anim.orderIndex < m_albumOrder.size()
+                                    && anim.swapWithOrderIndex >= 0 && anim.swapWithOrderIndex < m_albumOrder.size();
+            const bool dataIntact = orderValid
+                                    && m_albumOrder[anim.orderIndex] == anim.oldAlbumIndex
+                                    && m_albumOrder[anim.swapWithOrderIndex] == anim.newAlbumIndex;
+            if(!dataIntact) {
+                qDebug() << "[AlbumMosaic] anim cancelled: m_albumOrder changed mid-flight"
+                         << "cell:" << anim.cellIndex << "order:" << anim.orderIndex;
+                m_activeAnims.removeAt(i);
+                continue;
+            }
+            anim.newCoverReady = true;
+            m_albumOrder[anim.orderIndex] = anim.newAlbumIndex;
+            m_albumOrder[anim.swapWithOrderIndex] = anim.oldAlbumIndex;
+            // Rebuild m_currentGridIndices from m_albumOrder to keep all visible
+            // cells in sync — otherwise the swap target cell keeps its old album
+            // and creates a duplicate.
+            const int numVisible = m_coverPositions.size();
+            for(int cell = 0; cell < numVisible && cell < m_currentGridIndices.size(); ++cell) {
+                const int row = cell / cols;
+                const int col = cell % cols;
+                const int globalIndex = (row + m_scrollOffset) * cols + col;
+                const int orderIdx = ((globalIndex % m_albumOrder.size()) + m_albumOrder.size()) % m_albumOrder.size();
+                m_currentGridIndices[cell] = m_albumOrder[orderIdx];
             }
         }
 
@@ -605,7 +884,7 @@ void AlbumMosaicWidget::triggerAnimation()
     update();
 
     if(!m_activeAnims.isEmpty()) {
-        QTimer::singleShot(33, this, &AlbumMosaicWidget::triggerAnimation); // ~30fps
+        QTimer::singleShot(50, this, &AlbumMosaicWidget::triggerAnimation); // ~20fps (smoother with multiple instances)
     }
 }
 
@@ -625,6 +904,11 @@ void AlbumMosaicWidget::wheelEvent(QWheelEvent* event)
         if(m_coreContext && m_coreContext->settingsManager) {
             m_coreContext->settingsManager->set(QStringLiteral("AlbumMosaic/ColumnCount"), m_columnCount);
         }
+        // Cancel any active animations — their cell indices are stale after zoom
+        m_activeAnims.clear();
+        m_recentSwappedAlbums.clear();
+        m_recentSwappedQueue.clear();
+        invalidateScaledCache();
         updateMosaic();
         update();
         updateVisibleThumbnailKeys();
@@ -635,6 +919,10 @@ void AlbumMosaicWidget::wheelEvent(QWheelEvent* event)
     const int scrollAmount = delta > 0 ? -1 : 1;
 
     m_scrollOffset += scrollAmount;
+
+    // Cancel active animations — their orderIndex/cellIndex were computed with
+    // the old scrollOffset and no longer match the visible grid.
+    m_activeAnims.clear();
 
     updateMosaic();
     update();
@@ -721,18 +1009,18 @@ void AlbumMosaicWidget::mouseDoubleClickEvent(QMouseEvent* event)
 
 void AlbumMosaicWidget::contextMenuEvent(QContextMenuEvent* event)
 {
-    m_rightClickedCellIndex = -1;
+    int rightClickedCellIndex = -1;
     for(int i = 0; i < m_coverPositions.size(); ++i) {
         if(m_coverPositions[i].contains(event->pos())) {
-            m_rightClickedCellIndex = i;
+            rightClickedCellIndex = i;
             break;
         }
     }
 
     QMenu menu(this);
 
-    if(m_rightClickedCellIndex != -1 && m_rightClickedCellIndex < m_currentGridIndices.size()) {
-        int albumIndex = m_currentGridIndices[m_rightClickedCellIndex];
+    if(rightClickedCellIndex != -1 && rightClickedCellIndex < m_currentGridIndices.size()) {
+        int albumIndex = m_currentGridIndices[rightClickedCellIndex];
         if(albumIndex < m_albums.size()) {
             const AlbumInfo& album = m_albums[albumIndex];
             Fooyin::TrackList albumTracks = getAlbumTracks(album.album, album.albumArtist);
@@ -743,14 +1031,22 @@ void AlbumMosaicWidget::contextMenuEvent(QContextMenuEvent* event)
                 playAlbum(album.album, album.albumArtist);
             });
 
+            // "Play Next" — inserts album at the front of the queue
+            // Playback continues in the active playlist (e.g. Default shuffle) after the queue is empty
+            QAction* playNextAction = menu.addAction(tr("Play Next"));
+            connect(playNextAction, &QAction::triggered, this, [this, albumTracks]() {
+                if(m_coreContext && m_coreContext->playerController) {
+                    m_coreContext->playerController->queueTracksNext(albumTracks);
+                }
+            });
+
             // "Play and Replace Queue" — clears the queue, then plays the album
             QAction* playReplaceQueueAction = menu.addAction(tr("Play and Replace Queue"));
             connect(playReplaceQueueAction, &QAction::triggered, this, [this, album, albumTracks]() {
                 if(m_coreContext && m_coreContext->playerController) {
                     m_coreContext->playerController->clearQueue();
-                    m_coreContext->playerController->queueTracks(albumTracks);
+                    m_coreContext->playerController->queueTracksNext(albumTracks);
                 }
-                playAlbum(album.album, album.albumArtist);
             });
 
             // Use Fooyin's standard track context menu (Queue, Add to Playlist, Properties, etc.)
@@ -819,19 +1115,6 @@ Fooyin::TrackList AlbumMosaicWidget::getAlbumTracks(const QString& album, const 
     return {};
 }
 
-void AlbumMosaicWidget::queueAlbum(const QString& album, const QString& albumArtist)
-{
-    Fooyin::TrackList albumTracks = getAlbumTracks(album, albumArtist);
-
-    if(albumTracks.empty()) {
-        return;
-    }
-
-    if(m_coreContext && m_coreContext->playerController) {
-        m_coreContext->playerController->queueTracks(albumTracks);
-    }
-}
-
 void AlbumMosaicWidget::showInLibrary(const QString& album, const QString& albumArtist)
 {
     // Feature: Show in library — select the album's tracks in the library view
@@ -852,14 +1135,8 @@ void AlbumMosaicWidget::showInLibrary(const QString& album, const QString& album
 
 void AlbumMosaicWidget::showSettingsDialog()
 {
-    if(!m_coreContext || !m_coreContext->settingsManager) {
-        return;
-    }
-
-    AlbumMosaicSettingsDialog dialog(m_coreContext->settingsManager, m_coreContext->library, this);
-    dialog.exec();
-
-    loadSettings();
+    // Fooyin pattern: singleton non-modal config dialog per widget instance
+    openConfigDialog();
 }
 
 void AlbumMosaicWidget::addQuickSettings(QMenu* menu)
@@ -878,7 +1155,7 @@ void AlbumMosaicWidget::addQuickSettings(QMenu* menu)
         m_enableAnim = checked;
         settings->set(QStringLiteral("AlbumMosaic/EnableAnim"), checked);
         if(checked) {
-            m_animTimer->start(m_animInterval);
+            m_animTimer->start(animIntervalMs());
         } else {
             m_animTimer->stop();
             m_activeAnims.clear();
@@ -894,12 +1171,7 @@ void AlbumMosaicWidget::addQuickSettings(QMenu* menu)
         action->setChecked(m_animType == type);
         connect(action, &QAction::triggered, this, [this, settings, type]() {
             m_animType = type;
-            settings->set(QStringLiteral("AlbumMosaic/AnimType"),
-                          type == AnimType::Flip3D ? "Flip3D" :
-                          type == AnimType::Crossfade ? "Crossfade" :
-                          type == AnimType::Slide ? "Slide" :
-                          type == AnimType::Zoom ? "Zoom" :
-                          type == AnimType::PageCurl ? "PageCurl" : "Random");
+            settings->set(QStringLiteral("AlbumMosaic/AnimType"), animTypeKey(type));
         });
     };
     addAnimTypeAction(tr("3D Flip"), AnimType::Flip3D);
@@ -917,9 +1189,11 @@ void AlbumMosaicWidget::addQuickSettings(QMenu* menu)
         action->setChecked(m_animSpeed == speed);
         connect(action, &QAction::triggered, this, [this, settings, speed]() {
             m_animSpeed = speed;
-            settings->set(QStringLiteral("AlbumMosaic/AnimSpeed"),
-                          speed == AnimSpeed::Fast ? "Fast" :
-                          speed == AnimSpeed::Slow ? "Slow" : "Medium");
+            settings->set(QStringLiteral("AlbumMosaic/AnimSpeed"), animSpeedKey(speed));
+            // Restart timer with new interval (speed + scope)
+            if(m_animTimer->isActive()) {
+                m_animTimer->start(animIntervalMs());
+            }
         });
     };
     addSpeedAction(tr("Fast"), AnimSpeed::Fast);
@@ -934,9 +1208,11 @@ void AlbumMosaicWidget::addQuickSettings(QMenu* menu)
         action->setChecked(m_animScope == scope);
         connect(action, &QAction::triggered, this, [this, settings, scope]() {
             m_animScope = scope;
-            settings->set(QStringLiteral("AlbumMosaic/AnimScope"),
-                          scope == AnimScope::Multiple ? "Multiple" :
-                          scope == AnimScope::Wave ? "Wave" : "Single");
+            settings->set(QStringLiteral("AlbumMosaic/AnimScope"), animScopeKey(scope));
+            // Restart timer with new interval (speed + scope)
+            if(m_animTimer->isActive()) {
+                m_animTimer->start(animIntervalMs());
+            }
         });
     };
     addScopeAction(tr("Single"), AnimScope::Single);
@@ -951,12 +1227,7 @@ void AlbumMosaicWidget::addQuickSettings(QMenu* menu)
         action->setChecked(m_sortMode == mode);
         connect(action, &QAction::triggered, this, [this, settings, mode]() {
             m_sortMode = mode;
-            settings->set(QStringLiteral("AlbumMosaic/SortMode"),
-                          mode == SortMode::Year ? "Year" :
-                          mode == SortMode::YearDesc ? "YearDesc" :
-                          mode == SortMode::Rating ? "Rating" :
-                          mode == SortMode::PlayCount ? "PlayCount" :
-                          mode == SortMode::Recent ? "Recent" : "Random");
+            settings->set(QStringLiteral("AlbumMosaic/SortMode"), sortModeKey(mode));
             randomizeGrid();
             invalidateScaledCache();
             update();
@@ -973,49 +1244,21 @@ void AlbumMosaicWidget::addQuickSettings(QMenu* menu)
 void AlbumMosaicWidget::loadSettings()
 {
     if(m_coreContext && m_coreContext->settingsManager) {
-        m_enableAnim = m_coreContext->settingsManager->value(QStringLiteral("AlbumMosaic/EnableAnim")).toBool();
-        m_animInterval = m_coreContext->settingsManager->value(QStringLiteral("AlbumMosaic/AnimInterval")).toInt();
-        m_columnCount = m_coreContext->settingsManager->value(QStringLiteral("AlbumMosaic/ColumnCount")).toInt();
-        m_genreFilter = m_coreContext->settingsManager->value(QStringLiteral("AlbumMosaic/GenreFilter")).toString();
-        m_artistFilter = m_coreContext->settingsManager->value(QStringLiteral("AlbumMosaic/ArtistFilter")).toString();
-
-        // Load animation type
-        const QString animTypeStr = m_coreContext->settingsManager->value(QStringLiteral("AlbumMosaic/AnimType")).toString();
-        if(animTypeStr == "Crossfade") m_animType = AnimType::Crossfade;
-        else if(animTypeStr == "Slide") m_animType = AnimType::Slide;
-        else if(animTypeStr == "Zoom") m_animType = AnimType::Zoom;
-        else if(animTypeStr == "PageCurl") m_animType = AnimType::PageCurl;
-        else if(animTypeStr == "Random") m_animType = AnimType::Random;
-        else m_animType = AnimType::Flip3D;
-
-        // Load animation speed
-        const QString speedStr = m_coreContext->settingsManager->value(QStringLiteral("AlbumMosaic/AnimSpeed")).toString();
-        if(speedStr == "Fast") m_animSpeed = AnimSpeed::Fast;
-        else if(speedStr == "Slow") m_animSpeed = AnimSpeed::Slow;
-        else m_animSpeed = AnimSpeed::Medium;
-
-        // Load animation scope
-        const QString scopeStr = m_coreContext->settingsManager->value(QStringLiteral("AlbumMosaic/AnimScope")).toString();
-        if(scopeStr == "Multiple") m_animScope = AnimScope::Multiple;
-        else if(scopeStr == "Wave") m_animScope = AnimScope::Wave;
-        else m_animScope = AnimScope::Single;
-
-        // Load background color
-        m_bgColor = QColor(m_coreContext->settingsManager->value(QStringLiteral("AlbumMosaic/BgColor")).toString());
+        auto* settings = m_coreContext->settingsManager;
+        m_enableAnim = settings->value(QStringLiteral("AlbumMosaic/EnableAnim")).toBool();
+        m_columnCount = settings->value(QStringLiteral("AlbumMosaic/ColumnCount")).toInt();
+        m_genreFilter = settings->value(QStringLiteral("AlbumMosaic/GenreFilter")).toString();
+        m_artistFilter = settings->value(QStringLiteral("AlbumMosaic/ArtistFilter")).toString();
+        m_animType = animTypeFromKey(settings->value(QStringLiteral("AlbumMosaic/AnimType")).toString());
+        m_animSpeed = animSpeedFromKey(settings->value(QStringLiteral("AlbumMosaic/AnimSpeed")).toString());
+        m_animScope = animScopeFromKey(settings->value(QStringLiteral("AlbumMosaic/AnimScope")).toString());
+        m_sortMode = sortModeFromKey(settings->value(QStringLiteral("AlbumMosaic/SortMode")).toString());
+        m_bgColor = QColor(settings->value(QStringLiteral("AlbumMosaic/BgColor")).toString());
         if(!m_bgColor.isValid()) m_bgColor = Qt::black;
-
-        // Load sort mode
-        const QString sortStr = m_coreContext->settingsManager->value(QStringLiteral("AlbumMosaic/SortMode")).toString();
-        if(sortStr == "Year") m_sortMode = SortMode::Year;
-        else if(sortStr == "YearDesc") m_sortMode = SortMode::YearDesc;
-        else if(sortStr == "Rating") m_sortMode = SortMode::Rating;
-        else if(sortStr == "PlayCount") m_sortMode = SortMode::PlayCount;
-        else if(sortStr == "Recent") m_sortMode = SortMode::Recent;
-        else m_sortMode = SortMode::Random;
 
         // Sync inline sort combo
         if(m_sortCombo) {
-            int idx = m_sortCombo->findData(sortStr);
+            int idx = m_sortCombo->findData(sortModeKey(m_sortMode));
             if(idx >= 0 && idx != m_sortCombo->currentIndex()) {
                 QSignalBlocker blocker(m_sortCombo);
                 m_sortCombo->setCurrentIndex(idx);
@@ -1023,7 +1266,7 @@ void AlbumMosaicWidget::loadSettings()
         }
 
         if(m_enableAnim) {
-            m_animTimer->start(m_animInterval);
+            m_animTimer->start(animIntervalMs());
         } else {
             m_animTimer->stop();
         }
@@ -1044,12 +1287,7 @@ void AlbumMosaicWidget::onSortChanged()
     m_coreContext->settingsManager->set(QStringLiteral("AlbumMosaic/SortMode"), sortStr);
 
     // Update sort mode and re-sort
-    if(sortStr == "Year") m_sortMode = SortMode::Year;
-    else if(sortStr == "YearDesc") m_sortMode = SortMode::YearDesc;
-    else if(sortStr == "Rating") m_sortMode = SortMode::Rating;
-    else if(sortStr == "PlayCount") m_sortMode = SortMode::PlayCount;
-    else if(sortStr == "Recent") m_sortMode = SortMode::Recent;
-    else m_sortMode = SortMode::Random;
+    m_sortMode = sortModeFromKey(sortStr);
 
     randomizeGrid();
     update();
@@ -1074,40 +1312,103 @@ void AlbumMosaicWidget::playAlbum(const QString& album, const QString& albumArti
     }
 }
 
-int AlbumMosaicWidget::findAlbumCell(const QString& album, const QString& albumArtist) const
-{
-    for(int i = 0; i < m_currentGridIndices.size() && i < m_coverPositions.size(); ++i) {
-        int albumIndex = m_currentGridIndices[i];
-        if(albumIndex < m_albums.size()) {
-            const AlbumInfo& info = m_albums[albumIndex];
-            if(info.album == album && info.albumArtist == albumArtist) {
-                return i;
-            }
-        }
-    }
-    return -1;
-}
-
 void AlbumMosaicWidget::searchEvent(const Fooyin::SearchRequest& request)
 {
-    // Feature: Search integration
+    // Feature: Search integration — debounce so each keystroke doesn't rescan
+    // the entire library; reload once the user pauses typing.
     m_searchQuery = request.text;
-    loadAlbumMetadata();
-    update();
+    if(!m_searchTimer) {
+        m_searchTimer = new QTimer(this);
+        m_searchTimer->setSingleShot(true);
+        m_searchTimer->setInterval(300);
+        connect(m_searchTimer, &QTimer::timeout, this, [this]() {
+            loadAlbumMetadata();
+            update();
+        });
+    }
+    m_searchTimer->start();
 }
 
 void AlbumMosaicWidget::saveLayoutData(QJsonObject& layout)
 {
-    // Bug 7: Persist scroll offset and filters in layout
+    // Per-instance config — each widget instance keeps its own settings in the
+    // layout (Fooyin's per-instance config model, like CoverWidget::ConfigData).
+    // Global SettingsManager values remain the defaults for new instances.
     layout[QStringLiteral("scrollOffset")] = m_scrollOffset;
+    layout[QStringLiteral("columnCount")] = m_columnCount;
+    layout[QStringLiteral("enableAnim")] = m_enableAnim;
+    layout[QStringLiteral("animType")] = animTypeKey(m_animType);
+    layout[QStringLiteral("animSpeed")] = animSpeedKey(m_animSpeed);
+    layout[QStringLiteral("animScope")] = animScopeKey(m_animScope);
+    layout[QStringLiteral("sortMode")] = sortModeKey(m_sortMode);
+    layout[QStringLiteral("bgColor")] = m_bgColor.name();
+    layout[QStringLiteral("genreFilter")] = m_genreFilter;
+    layout[QStringLiteral("artistFilter")] = m_artistFilter;
 }
 
 void AlbumMosaicWidget::loadLayoutData(const QJsonObject& layout)
 {
-    // Bug 7: Restore scroll offset from layout
+    // Restore per-instance config — overrides the global defaults loaded in the
+    // constructor so two instances can run different settings.
     if(layout.contains(QStringLiteral("scrollOffset"))) {
         m_scrollOffset = layout.value(QStringLiteral("scrollOffset")).toInt();
     }
+    if(layout.contains(QStringLiteral("columnCount"))) {
+        m_columnCount = layout.value(QStringLiteral("columnCount")).toInt();
+    }
+    if(layout.contains(QStringLiteral("enableAnim"))) {
+        m_enableAnim = layout.value(QStringLiteral("enableAnim")).toBool();
+    }
+    if(layout.contains(QStringLiteral("animType"))) {
+        m_animType = animTypeFromKey(layout.value(QStringLiteral("animType")).toString());
+    }
+    if(layout.contains(QStringLiteral("animSpeed"))) {
+        m_animSpeed = animSpeedFromKey(layout.value(QStringLiteral("animSpeed")).toString());
+    }
+    if(layout.contains(QStringLiteral("animScope"))) {
+        m_animScope = animScopeFromKey(layout.value(QStringLiteral("animScope")).toString());
+    }
+    if(layout.contains(QStringLiteral("sortMode"))) {
+        m_sortMode = sortModeFromKey(layout.value(QStringLiteral("sortMode")).toString());
+    }
+    if(layout.contains(QStringLiteral("bgColor"))) {
+        const QColor c(layout.value(QStringLiteral("bgColor")).toString());
+        if(c.isValid()) m_bgColor = c;
+    }
+    if(layout.contains(QStringLiteral("genreFilter"))) {
+        m_genreFilter = layout.value(QStringLiteral("genreFilter")).toString();
+    }
+    if(layout.contains(QStringLiteral("artistFilter"))) {
+        m_artistFilter = layout.value(QStringLiteral("artistFilter")).toString();
+    }
+}
+
+void AlbumMosaicWidget::finalise()
+{
+    // Called after layout data is restored — restart the animation timer with
+    // the restored per-instance config (the constructor may have used defaults).
+    if(m_enableAnim) {
+        m_animTimer->start(animIntervalMs());
+    } else {
+        m_animTimer->stop();
+    }
+}
+
+void AlbumMosaicWidget::openConfigDialog()
+{
+    if(!m_coreContext || !m_coreContext->settingsManager) {
+        return;
+    }
+    auto* dialog = new AlbumMosaicSettingsDialog(m_coreContext->settingsManager, m_coreContext->library, this);
+    connect(dialog, &QDialog::accepted, this, &AlbumMosaicWidget::loadSettings);
+    // Fooyin keeps the dialog singleton per widget instance
+    showConfigDialog(dialog);
+}
+
+void AlbumMosaicWidget::layoutEditingMenu(QMenu* menu)
+{
+    // Expose a "Configure…" action in Fooyin's layout-editing context menu
+    addConfigureAction(menu);
 }
 
 void AlbumMosaicWidget::paintEvent(QPaintEvent* event)
@@ -1125,18 +1426,12 @@ void AlbumMosaicWidget::paintEvent(QPaintEvent* event)
     const auto coverSize = Fooyin::CoverProvider::findThumbnailSize(m_coverPositions[0].size());
     const bool useAdaptiveSize = m_coverProvider != nullptr;
 
-    // If cell size changed, clear scaled cache (covers will be re-scaled on next paint)
-    if(m_scaledCacheCellSize != m_coverPositions[0].size()) {
-        m_scaledCache.clear();
-        m_scaledCacheCellSize = m_coverPositions[0].size();
-    }
-
     // Duration based on speed setting (must match triggerAnimation)
     const int durationMs = [this]() {
         switch(m_animSpeed) {
-            case AnimSpeed::Fast: return 300;
-            case AnimSpeed::Slow: return 1000;
-            default: return 600;
+            case AnimSpeed::Fast: return 250;
+            case AnimSpeed::Slow: return 2000;
+            default: return 800;
         }
     }();
 
@@ -1165,9 +1460,8 @@ void AlbumMosaicWidget::paintEvent(QPaintEvent* event)
             if(albumIndex < m_albums.size()) {
                 const AlbumInfo& album = m_albums[albumIndex];
 
-                // Feature: Highlight currently playing album
-                const bool isPlaying = (album.album == m_currentPlayingAlbum
-                                        && album.albumArtist == m_currentPlayingArtist);
+                // Feature: Highlight currently playing album (pre-resolved index)
+                const bool isPlaying = (albumIndex == m_playingAlbumIndex);
 
                 // Use cached scaled cover — avoids loading + scaling every frame
                 QPixmap scaledCover = getCoverForPaint(albumIndex, cell.size(), coverSize);
@@ -1185,7 +1479,9 @@ void AlbumMosaicWidget::paintEvent(QPaintEvent* event)
                     int fade = m_coverFadeProgress.value(albumIndex, 100);
                     qreal opacity = fade / 100.0;
 
-                    QRect destRect = scaledCover.rect();
+                    // Fit the pixmap into the cell — handles stale-size cache
+                    // entries during a resize drag (stretched until cache refreshes)
+                    QRect destRect(QPoint(0, 0), scaledCover.size().scaled(cell.size(), Qt::KeepAspectRatio));
                     destRect.moveCenter(cell.center());
 
                     if(isAnimating) {
@@ -1201,7 +1497,7 @@ void AlbumMosaicWidget::paintEvent(QPaintEvent* event)
                         if(albumToShow >= 0 && albumToShow < m_albums.size() && albumToShow != albumIndex) {
                             animCover = getCoverForPaint(albumToShow, cell.size(), coverSize);
                             if(!animCover.isNull()) {
-                                animRect = animCover.rect();
+                                animRect = QRect(QPoint(0, 0), animCover.size().scaled(cell.size(), Qt::KeepAspectRatio));
                                 animRect.moveCenter(cell.center());
                             } else {
                                 animCover = scaledCover;
@@ -1448,10 +1744,25 @@ void AlbumMosaicWidget::resizeEvent(QResizeEvent* event)
     if(m_sortCombo) {
         m_sortCombo->move(width() - m_sortCombo->width() - 8, 8);
     }
-    invalidateScaledCache();
+    // Relayout immediately (cheap index math) so cells track the resize.
+    // Covers are drawn stretched during the drag — see getCoverForPaint.
     updateMosaic();
     update();
-    updateVisibleThumbnailKeys();
+
+    // Debounce the expensive work: invalidating the scaled cache triggers a
+    // re-scale of every visible cover. During a drag-resize this fires dozens
+    // of times per second — coalesce until the resize settles.
+    if(!m_resizeTimer) {
+        m_resizeTimer = new QTimer(this);
+        m_resizeTimer->setSingleShot(true);
+        m_resizeTimer->setInterval(80);
+        connect(m_resizeTimer, &QTimer::timeout, this, [this]() {
+            invalidateScaledCache();
+            update();
+            updateVisibleThumbnailKeys();
+        });
+    }
+    m_resizeTimer->start();
 }
 
 void AlbumMosaicWidget::invalidateScaledCache()
@@ -1462,8 +1773,11 @@ void AlbumMosaicWidget::invalidateScaledCache()
 
 QPixmap AlbumMosaicWidget::getCoverForPaint(int albumIndex, const QSize& cellSize, const Fooyin::ThumbnailSize& coverSize)
 {
-    // Return scaled cache if available and cell size matches
-    if(m_scaledCache.contains(albumIndex) && m_scaledCacheCellSize == cellSize) {
+    // Return scaled cache if available — even at a stale size. During a resize
+    // drag the cell size changes every frame; re-scaling every cover each frame
+    // would stall the UI. The paint path stretches stale pixmaps instead, and
+    // the debounced resize timer invalidates the cache once the drag settles.
+    if(m_scaledCache.contains(albumIndex)) {
         return m_scaledCache[albumIndex];
     }
 
@@ -1485,11 +1799,35 @@ QPixmap AlbumMosaicWidget::getCoverForPaint(int albumIndex, const QSize& cellSiz
     }
 
     // Scale to cell size and cache
-    while(m_scaledCache.size() >= MAX_CACHE_SIZE) {
-        m_scaledCache.remove(m_scaledCache.begin().key());
+    // Adaptive cache limit: visible covers + 50% headroom for preloaded swap candidates
+    const int visibleCount = m_currentGridIndices.size();
+    const int adaptiveMax = std::max(MAX_CACHE_SIZE, visibleCount * 3 / 2);
+    while(m_scaledCache.size() >= adaptiveMax) {
+        // Build set of currently visible album indices
+        QSet<int> visibleIndices;
+        for(int idx : m_currentGridIndices) {
+            visibleIndices.insert(idx);
+        }
+        // Find first non-visible entry to evict
+        int toRemove = -1;
+        for(auto it = m_scaledCache.begin(); it != m_scaledCache.end(); ++it) {
+            if(!visibleIndices.contains(it.key())) {
+                toRemove = it.key();
+                break;
+            }
+        }
+        // If all are visible, evict the oldest (begin)
+        if(toRemove == -1) {
+            toRemove = m_scaledCache.begin().key();
+        }
+        m_scaledCache.remove(toRemove);
     }
 
-    QPixmap scaled = cover.scaled(cellSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    // Scale at device pixels for HiDPI sharpness (CoverWidget does the same).
+    // A dpr=2 pixmap drawn into a logical-size rect renders at full resolution.
+    const double dpr = devicePixelRatioF();
+    QPixmap scaled = cover.scaled(cellSize * dpr, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    scaled.setDevicePixelRatio(dpr);
     m_scaledCache[albumIndex] = scaled;
     m_scaledCacheCellSize = cellSize;
     return scaled;

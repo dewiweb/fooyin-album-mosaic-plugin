@@ -32,7 +32,6 @@ void AlbumMosaicPlugin::initialise(const Fooyin::CorePluginContext& context)
     // Create settings for the plugin
     if(context.settingsManager) {
         context.settingsManager->createSetting(QStringLiteral("AlbumMosaic/EnableAnim"), true);
-        context.settingsManager->createSetting(QStringLiteral("AlbumMosaic/AnimInterval"), 3000);
         context.settingsManager->createSetting(QStringLiteral("AlbumMosaic/ColumnCount"), 10);
         context.settingsManager->createSetting(QStringLiteral("AlbumMosaic/GenreFilter"), QString());
         context.settingsManager->createSetting(QStringLiteral("AlbumMosaic/ArtistFilter"), QString());

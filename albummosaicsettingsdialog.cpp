@@ -36,7 +36,6 @@ AlbumMosaicSettingsDialog::AlbumMosaicSettingsDialog(Fooyin::SettingsManager* se
     , m_settingsManager{settingsManager}
     , m_library{library}
     , m_enableAnimCheckbox{new QCheckBox(tr("Enable Animation"), this)}
-    , m_animIntervalSpinBox{new QSpinBox(this)}
     , m_columnCountSpinBox{new QSpinBox(this)}
     , m_genreComboBox{new QComboBox(this)}
     , m_artistComboBox{new QComboBox(this)}
@@ -58,13 +57,6 @@ AlbumMosaicSettingsDialog::AlbumMosaicSettingsDialog(Fooyin::SettingsManager* se
     auto* animLayout = new QVBoxLayout(animGroup);
 
     animLayout->addWidget(m_enableAnimCheckbox);
-
-    auto* intervalLayout = new QHBoxLayout();
-    intervalLayout->addWidget(new QLabel(tr("Animation Interval (ms):"), this));
-    m_animIntervalSpinBox->setRange(1000, 30000);
-    m_animIntervalSpinBox->setSingleStep(1000);
-    intervalLayout->addWidget(m_animIntervalSpinBox);
-    animLayout->addLayout(intervalLayout);
 
     auto* animTypeLayout = new QHBoxLayout();
     animTypeLayout->addWidget(new QLabel(tr("Animation Type:"), this));
@@ -236,7 +228,6 @@ void AlbumMosaicSettingsDialog::loadSettings()
     }
 
     m_enableAnimCheckbox->setChecked(m_settingsManager->value(QStringLiteral("AlbumMosaic/EnableAnim")).toBool());
-    m_animIntervalSpinBox->setValue(m_settingsManager->value(QStringLiteral("AlbumMosaic/AnimInterval")).toInt());
     m_columnCountSpinBox->setValue(m_settingsManager->value(QStringLiteral("AlbumMosaic/ColumnCount")).toInt());
 
     QString genreFilter = m_settingsManager->value(QStringLiteral("AlbumMosaic/GenreFilter")).toString();
@@ -293,7 +284,6 @@ void AlbumMosaicSettingsDialog::saveSettings()
     }
 
     m_settingsManager->set(QStringLiteral("AlbumMosaic/EnableAnim"), m_enableAnimCheckbox->isChecked());
-    m_settingsManager->set(QStringLiteral("AlbumMosaic/AnimInterval"), m_animIntervalSpinBox->value());
     m_settingsManager->set(QStringLiteral("AlbumMosaic/ColumnCount"), m_columnCountSpinBox->value());
     m_settingsManager->set(QStringLiteral("AlbumMosaic/GenreFilter"), m_genreComboBox->currentData().toString());
     m_settingsManager->set(QStringLiteral("AlbumMosaic/ArtistFilter"), m_artistComboBox->currentData().toString());
@@ -315,7 +305,6 @@ void AlbumMosaicSettingsDialog::applySettings()
 void AlbumMosaicSettingsDialog::restoreDefaults()
 {
     m_enableAnimCheckbox->setChecked(true);
-    m_animIntervalSpinBox->setValue(3000);
     m_columnCountSpinBox->setValue(10);
     m_genreComboBox->setCurrentIndex(0);
     m_artistComboBox->setCurrentIndex(0);
