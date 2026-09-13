@@ -1,0 +1,40 @@
+app-id: io.github.dewiweb.AlbumMosaic
+runtime: org.kde.Platform
+runtime-version: '6.11'
+sdk: org.kde.Sdk
+command: fooyin
+
+# FetchContent (qcoro, kdsingleapplication) needs network during configure
+build-options:
+  build-args:
+    - --share=network
+
+modules:
+  # Fooyin core+gui with headers, so the plugin can link against it.
+  # All plugin deps are in the KDE runtime already (icu, taglib, zlib,
+  # ffmpeg) or fetched at configure time (qcoro, kdsingleapplication).
+  - name: fooyin
+    buildsystem: cmake-ninja
+    builddir: true
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DINSTALL_HEADERS=ON
+      - -DBUILD_PLUGINS=OFF
+      - -DBUILD_TESTING=OFF
+      - -DBUILD_TRANSLATIONS=OFF
+    sources:
+      - type: git
+        url: https://github.com/fooyin/fooyin.git
+        tag: v0.12.6
+        commit: 6ba72ae1b00007251d4c09210e4c6ad4e7b867b8
+
+  - name: album-mosaic
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DCMAKE_PREFIX_PATH=/app
+      # The .so is loaded by the fooyin flatpak whose libs live in /app/lib
+      - -DCMAKE_INSTALL_RPATH=/app/lib/fooyin
+    sources:
+      - type: dir
+        path: ../..

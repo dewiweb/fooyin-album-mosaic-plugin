@@ -62,6 +62,8 @@ jobs:
           path: build/fyplugin_albummosaicplugin.so
 
   # ─── Flatpak ────────────────────────────────────────────────────────────
+  # Builds fooyin (headers) + the plugin inside the KDE SDK 6.11 sandbox so
+  # the .so is ABI-compatible with the flathub fooyin (Qt 6.11).
   build-flatpak:
     runs-on: ubuntu-24.04
     continue-on-error: true
@@ -74,27 +76,20 @@ jobs:
           sudo apt install -y flatpak flatpak-builder
           flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
           flatpak install --user -y org.kde.Sdk/x86_64/6.11
-          flatpak install --user -y org.kde.Platform/x86_64/6.11
 
-      - name: Build plugin for Flatpak
+      - name: Build with flatpak-builder
         run: |
-          # Build inside the Flatpak SDK environment
-          flatpak-builder --user --install-deps-from=flathub build-dir flatpak-manifest.json || true
-          # Fallback: build manually in the SDK
-          flatpak run --command=bash org.kde.Sdk/x86_64/6.11 -- -c "
-            cmake -B build -G Ninja \
-              -DCMAKE_BUILD_TYPE=Release \
-              -DCMAKE_PREFIX_PATH=/app
-            cmake --build build
-          " || echo "Flatpak build needs a manifest — skipping for now"
+          flatpak-builder --user --force-clean --disable-rofiles-fuse \
+            --install-deps-from=flathub \
+            flatpak-build packaging/flatpak/org.fooyin.fooyin.albummosaic.yaml
+          find flatpak-build/files -name 'fyplugin_albummosaicplugin.so'
 
       - name: Upload artifact
-        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: plugin-flatpak
-          path: build/fyplugin_albummosaicplugin.so
-          if-no-files-found: ignore
+          path: flatpak-build/files/lib/fooyin/plugins/fyplugin_albummosaicplugin.so
+          if-no-files-found: error
 
   # ─── Windows ───────────────────────────────────────────────────────────
   # Mirrors fooyin's own build-windows.yml: vcpkg pinned to fooyin's
