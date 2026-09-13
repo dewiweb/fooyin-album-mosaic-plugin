@@ -118,7 +118,23 @@ jobs:
           git clone --depth 1 --branch v0.12.6 https://github.com/fooyin/fooyin.git C:\fooyin-src
           cd C:\fooyin-src
           git submodule update --init --recursive
-          Copy-Item vcpkg.json "$env:GITHUB_WORKSPACE/vcpkg-lock.json"
+
+      # With BUILD_PLUGINS=OFF only the core deps are needed; the upstream
+      # manifest also builds ffmpeg's plugin-only siblings (projectm, openmpt,
+      # sdl2, libarchive, gme, soundtouch, soxr, libebur128, glm, sndfile).
+      - name: Trim vcpkg manifest to core deps
+        shell: pwsh
+        run: |
+          $baseline = (Get-Content C:\fooyin-src\vcpkg.json | ConvertFrom-Json).'builtin-baseline'
+          $manifest = @{
+            'builtin-baseline' = $baseline
+            dependencies = @(
+              @{ name = 'ffmpeg'; features = @('mp3lame', 'opus', 'vorbis') },
+              'icu', 'taglib', 'zlib', 'getopt'
+            )
+          }
+          $manifest | ConvertTo-Json -Depth 5 | Set-Content C:\fooyin-src\vcpkg.json
+          Copy-Item C:\fooyin-src\vcpkg.json "$env:GITHUB_WORKSPACE/vcpkg-lock.json"
 
       - name: Setup vcpkg
         shell: pwsh
