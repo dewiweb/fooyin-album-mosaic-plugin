@@ -96,61 +96,91 @@ jobs:
           if-no-files-found: ignore
 
   # ─── Windows ───────────────────────────────────────────────────────────
+  # Mirrors fooyin's own build-windows.yml: vcpkg pinned to fooyin's
+  # builtin-baseline, VCPKG_INSTALLED_DIR outside the build tree (avoids
+  # "INTERFACE_INCLUDE_DIRECTORIES prefixed in build directory" errors),
+  # binary + installed deps cached in C:/v.
   build-windows:
     runs-on: windows-latest
     continue-on-error: true
+    env:
+      VCPKG_ROOT_DIR: 'C:/vcpkg'
+      VCPKG_INSTALLED_DIR: 'C:/v'
+      VCPKG_DOWNLOADS: 'C:/v/dl'
+      VCPKG_DISABLE_METRICS: true
     steps:
       - uses: actions/checkout@v4
+
+      - name: Clone Fooyin
+        shell: pwsh
+        run: |
+          git clone --depth 1 --branch v0.12.6 https://github.com/fooyin/fooyin.git C:\fooyin-src
+          cd C:\fooyin-src
+          git submodule update --init --recursive
+          Copy-Item vcpkg.json "$env:GITHUB_WORKSPACE/vcpkg-lock.json"
+
+      - name: Setup vcpkg
+        shell: pwsh
+        run: |
+          $vcpkgCommit = (Get-Content C:\fooyin-src\vcpkg.json | ConvertFrom-Json).'builtin-baseline'
+          git init $env:VCPKG_ROOT_DIR
+          git -C $env:VCPKG_ROOT_DIR remote add origin https://github.com/microsoft/vcpkg.git 2>$null
+          git -C $env:VCPKG_ROOT_DIR fetch --depth 1 origin $vcpkgCommit
+          git -C $env:VCPKG_ROOT_DIR checkout --detach FETCH_HEAD
+          & "$env:VCPKG_ROOT_DIR/bootstrap-vcpkg.bat" -disableMetrics
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          echo "VCPKG_ROOT=$env:VCPKG_ROOT_DIR" >> $env:GITHUB_ENV
+          echo "VCPKG_BINARY_SOURCES=clear;files,C:/v/bin-cache,readwrite" >> $env:GITHUB_ENV
+
+      - name: Cache vcpkg deps
+        uses: actions/cache@v4
+        with:
+          path: C:/v
+          key: windows-vcpkg-${{ hashFiles('vcpkg-lock.json') }}
+          restore-keys: windows-vcpkg-
+
+      - name: Install CMake
+        uses: lukka/get-cmake@latest
+
+      - name: Install Ninja
+        run: choco install ninja -y
 
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
         with:
           version: '6.8.3'
+          archives: qtbase qtsvg qttools
+          cache: true
           arch: 'win64_msvc2022_64'
 
       - name: Setup MSVC
-        uses: ilammy/msvc-dev-cmd@v1
+        uses: TheMrMilchmann/setup-msvc-dev@v4
         with:
           arch: x64
-
-      - name: Setup vcpkg
-        shell: pwsh
-        run: |
-          git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
-          C:\vcpkg\bootstrap-vcpkg.bat
-          echo "VCPKG_ROOT=C:\vcpkg" >> $env:GITHUB_ENV
-
-      - name: Install ICU via vcpkg
-        shell: pwsh
-        run: |
-          C:\vcpkg\vcpkg install icu --triplet x64-windows
 
       - name: Cache Fooyin build
         id: cache-fooyin
         uses: actions/cache@v4
         with:
           path: C:\fooyin-dev
-          key: fooyin-0.12.6-windows-vcpkg-${{ runner.os }}
+          key: fooyin-0.12.6-windows-msvc-v2-${{ hashFiles('vcpkg-lock.json') }}
 
-      - name: Clone and build Fooyin
+      - name: Build Fooyin
         if: steps.cache-fooyin.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
-          git clone --depth 1 --branch v0.12.6 https://github.com/fooyin/fooyin.git C:\fooyin-src
           cd C:\fooyin-src
-          git submodule update --init --recursive
-          cmake -B build -G Ninja `
-            -DCMAKE_BUILD_TYPE=Release `
-            -DCMAKE_INSTALL_PREFIX=C:\fooyin-dev `
-            -DINSTALL_HEADERS=ON `
+          cmake --preset release-vcpkg `
             -DBUILD_PLUGINS=OFF `
-            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
-            -DVCPKG_TARGET_TRIPLET=x64-windows `
-            -DQT_DIR="$env:QT_ROOT_DIR/lib/cmake/Qt6" `
-            -DQt6_DIR="$env:QT_ROOT_DIR/lib/cmake/Qt6" `
-            -DINSTALL_FHS=OFF
-          cmake --build build
-          cmake --install build
+            -DBUILD_TESTING=OFF `
+            -DINSTALL_HEADERS=ON `
+            -DVCPKG_INSTALLED_DIR="$env:VCPKG_INSTALLED_DIR" `
+            -DCMAKE_INSTALL_PREFIX=C:\fooyin-dev
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build build-release-vcpkg --config Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --install build-release-vcpkg --config Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Build plugin
         shell: pwsh
@@ -159,8 +189,11 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
             -DVCPKG_TARGET_TRIPLET=x64-windows `
+            -DVCPKG_INSTALLED_DIR="$env:VCPKG_INSTALLED_DIR" `
+            -DQT_DIR="$env:QT_ROOT_DIR/lib/cmake/Qt6" `
+            -DQt6_DIR="$env:QT_ROOT_DIR/lib/cmake/Qt6" `
             -DCMAKE_PREFIX_PATH="C:\fooyin-dev;$env:QT_ROOT_DIR"
-          cmake --build build
+          cmake --build build --config Release
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
