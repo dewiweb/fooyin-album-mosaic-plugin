@@ -2,7 +2,7 @@
 # Contributor: dewiweb <dewiweb@gmail.com>
 
 pkgname=fooyin-album-mosaic-plugin
-pkgver=2.0.0
+pkgver=2.2.0
 pkgrel=1
 pkgdesc="Fooyin plugin — album art mosaic with multiple animations, filtering, and playback controls"
 arch=('x86_64')
@@ -11,7 +11,7 @@ license=('GPL3')
 depends=('fooyin' 'qt6-base')
 makedepends=('cmake' 'ninja')
 source=("${pkgname}-${pkgver}.tar.gz::${url}/archive/refs/tags/v${pkgver}.tar.gz")
-sha256sums=('0f8995b39bd96e16ce829a60fd7a46ce57630a6fc6572d38831cd559466490bf')
+sha256sums=('31f76f73c99ea5f3149401ff1c4923ee2ee5a8d8ab9f5379602a88c4bfa0358b')
 
 build() {
     cd "${pkgname}-${pkgver}"

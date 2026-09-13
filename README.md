@@ -2,6 +2,8 @@
 
 Fooyin plugin to display an infinite scrolling mosaic of album covers with animations.
 
+![Album Mosaic demo](docs/demo.gif)
+
 ## Features
 
 ### Grid & Navigation
@@ -53,7 +55,21 @@ Fooyin plugin to display an infinite scrolling mosaic of album covers with anima
 
 ## Installation
 
-### Option 1: Build from source (recommended)
+### Option 1: Install via Fooyin GUI (easiest)
+
+1. Download `fyplugin_albummosaicplugin-linux-x86_64.so` from the [latest release](https://github.com/dewiweb/fooyin-album-mosaic-plugin/releases)
+2. Open Fooyin → Settings → Plugins
+3. Click "Install…" and select the `.so` file
+4. Restart Fooyin
+
+### Option 2: Manual copy
+
+```bash
+# Download the .so from releases, then:
+cp fyplugin_albummosaicplugin-linux-x86_64.so ~/.local/lib/fooyin/plugins/fyplugin_albummosaicplugin.so
+```
+
+### Option 3: Build from source
 
 ```bash
 git clone https://github.com/dewiweb/fooyin-album-mosaic-plugin.git
@@ -66,20 +82,6 @@ cd fooyin-album-mosaic-plugin
 mkdir build && cd build
 cmake .. -DCMAKE_PREFIX_PATH=/path/to/fooyin-dev
 cmake --build .
-cp fyplugin_albummosaicplugin.so ~/.local/lib/fooyin/plugins/
-```
-
-### Option 2: Install via Fooyin GUI
-
-1. Download the `.so` file from the [latest release](https://github.com/dewiweb/fooyin-album-mosaic-plugin/releases)
-2. Open Fooyin → Settings → Plugins
-3. Click "Install Plugin" and select the `.so` file
-4. Restart Fooyin
-
-### Option 3: Manual copy
-
-```bash
-# Download the .so from releases, then:
 cp fyplugin_albummosaicplugin.so ~/.local/lib/fooyin/plugins/
 ```
 
@@ -98,17 +100,18 @@ flatpak install org.kde.Sdk/x86_64/6.11
 ## Usage
 
 1. Open Fooyin
-2. Go to layout preferences
+2. Go to layout editing mode
 3. Add the "Album Mosaic" widget to your layout
 4. Right-click the widget → Settings to configure:
    - Animation type, speed, and scope
-   - Animation interval
-   - Number of columns
+   - Number of columns (or Ctrl+scroll to zoom)
    - Background color
    - Genre and artist filters
-5. Use mouse wheel to scroll infinitely through your albums
+5. Use the mouse wheel to scroll infinitely through your albums
 6. Double-click a cover to play the album
 7. Right-click a cover for context menu options
+
+Each widget instance keeps its own configuration (columns, animation, sort, filters) in the layout — multiple mosaics can run side by side with different settings.
 
 ## Build Scripts
 
