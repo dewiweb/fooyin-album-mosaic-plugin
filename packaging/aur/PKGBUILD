@@ -1,7 +1,7 @@
 # Maintainer: dewiweb <dewiweb@gmail.com>
 # Contributor: dewiweb <dewiweb@gmail.com>
 
-pkgname=fooyin-album-mosaic-plugin
+pkgname=fooyin-plugin-albummosaic
 pkgver=2.2.0
 pkgrel=1
 pkgdesc="Fooyin plugin — album art mosaic with multiple animations, filtering, and playback controls"

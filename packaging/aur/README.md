@@ -1,4 +1,4 @@
-# fooyin-album-mosaic-plugin
+# fooyin-plugin-albummosaic
 
 AUR package for the [Album Mosaic Plugin for Fooyin](https://github.com/dewiweb/fooyin-album-mosaic-plugin).
 
@@ -6,17 +6,17 @@ AUR package for the [Album Mosaic Plugin for Fooyin](https://github.com/dewiweb/
 
 ```bash
 # Using an AUR helper (yay, paru, etc.)
-yay -S fooyin-album-mosaic-plugin
+yay -S fooyin-plugin-albummosaic
 
 # Or manually:
-git clone https://aur.archlinux.org/fooyin-album-mosaic-plugin.git
-cd fooyin-album-mosaic-plugin
+git clone https://aur.archlinux.org/fooyin-plugin-albummosaic.git
+cd fooyin-plugin-albummosaic
 makepkg -si
 ```
 
 ## Requirements
 
-- `fooyin` (0.12.6 or newer, from AUR: `fooyin` or `fooyin-git`)
+- `fooyin` (0.12.6 or newer — official `extra/fooyin` package, or `fooyin-git` from AUR)
 - `qt6-base`
 - `cmake`, `ninja` (build only)
 

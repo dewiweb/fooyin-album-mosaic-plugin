@@ -69,7 +69,13 @@ Fooyin plugin to display an infinite scrolling mosaic of album covers with anima
 cp fyplugin_albummosaicplugin-linux-x86_64.so ~/.local/lib/fooyin/plugins/fyplugin_albummosaicplugin.so
 ```
 
-### Option 3: Build from source
+### Option 3: Arch Linux (AUR)
+
+```bash
+yay -S fooyin-plugin-albummosaic
+```
+
+### Option 4: Build from source
 
 ```bash
 git clone https://github.com/dewiweb/fooyin-album-mosaic-plugin.git
