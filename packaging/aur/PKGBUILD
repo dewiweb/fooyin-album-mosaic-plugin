@@ -2,7 +2,7 @@
 # Contributor: dewiweb <dewiweb@gmail.com>
 
 pkgname=fooyin-plugin-albummosaic
-pkgver=2.2.0
+pkgver=2.2.1
 pkgrel=1
 pkgdesc="Fooyin plugin — album art mosaic with multiple animations, filtering, and playback controls"
 arch=('x86_64')
