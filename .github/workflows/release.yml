@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
 
 jobs:
   # ─── Linux ──────────────────────────────────────────────────────────────
@@ -205,7 +206,7 @@ jobs:
   create-release:
     needs: [build-linux, build-flatpak, build-windows]
     runs-on: ubuntu-latest
-    if: always()
+    if: always() && startsWith(github.ref, 'refs/tags/')
     permissions:
       contents: write
     steps:
