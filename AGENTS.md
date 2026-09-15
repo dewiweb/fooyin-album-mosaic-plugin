@@ -84,31 +84,53 @@ flatpak override --user org.fooyin.fooyin --filesystem=~/.local/lib/fooyin
 
 ### File Structure
 
-- `albummosaicplugin.h/cpp` — Plugin entry point (registers widget, creates CoverProvider, declares settings)
-- `albummosaicwidget.h/cpp` — Main widget (rendering, scroll, flip animation, click handling, context menu, filters)
-- `albummosaicsettingsdialog.h/cpp` — Settings dialog (flip, columns, filters)
+- `albummosaicplugin.h/cpp` — Plugin entry point (registers widget, creates CoverProvider, owns shared ArtistCoverDownloader)
+- `albummosaicwidget.h/cpp` — Main widget (rendering, scroll, flip animation, click handling, context menu, filters, Artist mode)
+- `albummosaicsettingsdialog.h/cpp` — Settings dialog (display mode, flip, columns, filters)
+- `artistcoverdownloader.h/cpp` — Discogs artist cover downloader (shared singleton, saves to 3 locations)
 - `metadata.json` — Plugin metadata for Fooyin
 - `CMakeLists.txt` — Build configuration
 - `scripts/` — Build and test automation scripts
+
+### Artist Mode
+
+The plugin supports a `DisplayMode` toggle (Album / Artist) accessible via the settings dialog or right-click context menu:
+
+- **Album mode** (default): Groups tracks by album, shows front covers, click plays the album
+- **Artist mode**: Groups tracks by artist, shows artist covers, click plays all tracks by that artist
+
+Artist covers are downloaded from Discogs (only source supporting `Track::Cover::Artist`) and saved to **three locations**:
+
+| Location | Purpose | Found by |
+|----------|---------|----------|
+| `~/.local/share/fooyin/artistcovers/<md5(artist)>.jpg` | Plugin cache | Plugin fallback (always works) |
+| `<track_dir>/artist.jpg` | Fooyin native | `%path%/artist.*` (default config) |
+| `<artist_parent_dir>/artist.jpg` | Other players | Convention (MusicBee, MediaMonkey) |
+
+The downloader is a **shared singleton** owned by `AlbumMosaicPlugin` — multiple widget instances share one queue, preventing duplicate downloads.
 
 ### Plugin Settings
 
 Global defaults in `AlbumMosaic/*`; per-widget config is serialized in the layout via `saveLayoutData`/`loadLayoutData` and wins over these defaults.
 
+- `AlbumMosaic/DisplayMode` (string) — `Album` (default) or `Artist`
+- `AlbumMosaic/AutoDownloadArtistCovers` (bool) — Auto-download missing artist covers on startup
 - `AlbumMosaic/EnableAnim` (bool) — Enable/disable cover-swap animation
 - `AlbumMosaic/AnimType` (string) — `Flip3D` (default), `Crossfade`, `Slide`, `Zoom`, `PageCurl`, `Random`
 - `AlbumMosaic/AnimSpeed` (string) — `Fast`, `Medium` (default), `Slow`
 - `AlbumMosaic/AnimScope` (string) — `Single` (default), `Multiple`, `Wave`
 - `AlbumMosaic/ColumnCount` (int) — Number of columns in the grid
-- `AlbumMosaic/SortMode` (string) — `Random` (default), `Year`, `YearDesc`, `Rating`, `PlayCount`, `Recent`
+- `AlbumMosaic/SortMode` (string) — `Random` (default), `Alphabetical`, `Year`, `YearDesc`, `Rating`, `PlayCount`, `Recent`
 - `AlbumMosaic/BgColor` (string) — Background color (hex)
 - `AlbumMosaic/GenreFilter` (string) — Filter albums by genre
 - `AlbumMosaic/ArtistFilter` (string) — Filter albums by artist
 
 ### Key APIs Used
 
-- `Fooyin::MusicLibrary` — Album metadata loading
+- `Fooyin::MusicLibrary` — Album/artist metadata loading
 - `Fooyin::CoverProvider` — Cover loading (external files, embedded, parent directory)
+- `Fooyin::CoverRepository` — Cache invalidation after cover downloads
+- `Fooyin::NetworkAccessManager` — HTTP requests to Discogs API
 - `Fooyin::SettingsManager` — Plugin settings
 - `Fooyin::FyWidget` — Base widget class
 - `Fooyin::PlayerController` — Playback control

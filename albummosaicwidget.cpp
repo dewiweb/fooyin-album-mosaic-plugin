@@ -19,6 +19,7 @@
 
 #include "albummosaicwidget.h"
 #include "albummosaicsettingsdialog.h"
+#include "artistcoverdownloader.h"
 
 #include <QPainter>
 #include <QMouseEvent>
@@ -35,6 +36,10 @@
 #include <QPainterPath>
 #include <QMenu>
 #include <QJsonObject>
+#include <QCryptographicHash>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
 #include <cmath>
 #include <core/library/musiclibrary.h>
 #include <core/library/tracksort.h>
@@ -50,6 +55,20 @@
 #include <utils/actions/widgetcontext.h>
 #include <core/plugins/coreplugincontext.h>
 #include <utils/settings/settingsmanager.h>
+
+QString AlbumMosaicWidget::displayModeKey(DisplayMode m)
+{
+    switch(m) {
+        case DisplayMode::Artist: return QStringLiteral("Artist");
+        default:                  return QStringLiteral("Album");
+    }
+}
+
+AlbumMosaicWidget::DisplayMode AlbumMosaicWidget::displayModeFromKey(const QString& s)
+{
+    if(s == QLatin1String("Artist")) return DisplayMode::Artist;
+    return DisplayMode::Album;
+}
 
 QString AlbumMosaicWidget::animTypeKey(AnimType t)
 {
@@ -113,17 +132,19 @@ QString AlbumMosaicWidget::sortModeKey(SortMode m)
         case SortMode::Rating:    return QStringLiteral("Rating");
         case SortMode::PlayCount: return QStringLiteral("PlayCount");
         case SortMode::Recent:    return QStringLiteral("Recent");
+        case SortMode::Alphabetical: return QStringLiteral("Alphabetical");
         default:                  return QStringLiteral("Random");
     }
 }
 
 AlbumMosaicWidget::SortMode AlbumMosaicWidget::sortModeFromKey(const QString& s)
 {
-    if(s == QLatin1String("Year"))      return SortMode::Year;
-    if(s == QLatin1String("YearDesc"))  return SortMode::YearDesc;
-    if(s == QLatin1String("Rating"))    return SortMode::Rating;
-    if(s == QLatin1String("PlayCount")) return SortMode::PlayCount;
-    if(s == QLatin1String("Recent"))    return SortMode::Recent;
+    if(s == QLatin1String("Year"))         return SortMode::Year;
+    if(s == QLatin1String("YearDesc"))     return SortMode::YearDesc;
+    if(s == QLatin1String("Rating"))       return SortMode::Rating;
+    if(s == QLatin1String("PlayCount"))    return SortMode::PlayCount;
+    if(s == QLatin1String("Recent"))       return SortMode::Recent;
+    if(s == QLatin1String("Alphabetical")) return SortMode::Alphabetical;
     return SortMode::Random;
 }
 
@@ -144,11 +165,12 @@ int AlbumMosaicWidget::animIntervalMs() const
     }
 }
 
-AlbumMosaicWidget::AlbumMosaicWidget(Fooyin::GuiPluginContext* guiContext, Fooyin::CorePluginContext* coreContext, Fooyin::CoverProvider* coverProvider, QWidget* parent)
+AlbumMosaicWidget::AlbumMosaicWidget(Fooyin::GuiPluginContext* guiContext, Fooyin::CorePluginContext* coreContext, Fooyin::CoverProvider* coverProvider, ArtistCoverDownloader* artistCoverDownloader, QWidget* parent)
     : FyWidget{parent}
     , m_guiContext{guiContext}
     , m_coreContext{coreContext}
     , m_coverProvider{coverProvider}
+    , m_artistCoverDownloader{artistCoverDownloader}
     , m_animTimer{new QTimer(this)}
 {
     if(m_coreContext && m_coreContext->settingsManager) {
@@ -163,6 +185,8 @@ AlbumMosaicWidget::AlbumMosaicWidget(Fooyin::GuiPluginContext* guiContext, Fooyi
         m_sortMode = sortModeFromKey(settings->value(QStringLiteral("AlbumMosaic/SortMode")).toString());
         m_bgColor = QColor(settings->value(QStringLiteral("AlbumMosaic/BgColor")).toString());
         if(!m_bgColor.isValid()) m_bgColor = Qt::black;
+        m_displayMode = displayModeFromKey(settings->value(QStringLiteral("AlbumMosaic/DisplayMode")).toString());
+        m_autoDownloadArtistCovers = settings->value(QStringLiteral("AlbumMosaic/AutoDownloadArtistCovers")).toBool();
     }
 
     setMouseTracking(true);
@@ -211,6 +235,7 @@ AlbumMosaicWidget::AlbumMosaicWidget(Fooyin::GuiPluginContext* guiContext, Fooyi
     // Inline sort bar — minimal combo in top-right corner
     m_sortCombo = new QComboBox(this);
     m_sortCombo->addItem(tr("Random"), QStringLiteral("Random"));
+    m_sortCombo->addItem(tr("A-Z"), QStringLiteral("Alphabetical"));
     m_sortCombo->addItem(tr("Year ↓"), QStringLiteral("YearDesc"));
     m_sortCombo->addItem(tr("Year ↑"), QStringLiteral("Year"));
     m_sortCombo->addItem(tr("Rating"), QStringLiteral("Rating"));
@@ -249,12 +274,22 @@ AlbumMosaicWidget::AlbumMosaicWidget(Fooyin::GuiPluginContext* guiContext, Fooyi
         connect(m_coreContext->playerController, &Fooyin::PlayerController::currentTrackChanged, this, [this](const Fooyin::Track& track) {
             m_currentPlayingAlbum = track.album();
             m_currentPlayingArtist = track.albumArtist();
-            // Pre-resolve the album index once — avoids 2 QString compares
-            // per visible cell per repaint.
-            m_playingAlbumIndex = m_albumKeyToIndex.value(
-                m_currentPlayingAlbum + "|" + m_currentPlayingArtist, -1);
+            // Pre-resolve the index once — avoids 2 QString compares
+            // per visible cell per repaint. Key differs by display mode.
+            if(m_displayMode == DisplayMode::Artist) {
+                m_playingAlbumIndex = m_albumKeyToIndex.value(m_currentPlayingArtist, -1);
+            } else {
+                m_playingAlbumIndex = m_albumKeyToIndex.value(
+                    m_currentPlayingAlbum + "|" + m_currentPlayingArtist, -1);
+            }
             update();
         });
+    }
+
+    // Connect to the shared artist cover downloader (plugin-level singleton)
+    if(m_artistCoverDownloader) {
+        connect(m_artistCoverDownloader, &ArtistCoverDownloader::coverDownloaded,
+                this, &AlbumMosaicWidget::onArtistCoverDownloaded);
     }
 
     // loadAlbumMetadata() builds m_albums, then calls randomizeGrid()
@@ -279,6 +314,15 @@ QString AlbumMosaicWidget::layoutName() const
 }
 
 void AlbumMosaicWidget::loadAlbumMetadata()
+{
+    if(m_displayMode == DisplayMode::Artist) {
+        loadArtists();
+    } else {
+        loadAlbums();
+    }
+}
+
+void AlbumMosaicWidget::loadAlbums()
 {
     if(!m_coreContext || !m_coreContext->library) {
         return;
@@ -415,6 +459,207 @@ void AlbumMosaicWidget::loadAlbumMetadata()
     }
 }
 
+void AlbumMosaicWidget::loadArtists()
+{
+    if(!m_coreContext || !m_coreContext->library) {
+        return;
+    }
+
+    invalidateScaledCache();
+
+    Fooyin::TrackList tracks = m_coreContext->library->tracks();
+
+    if(tracks.empty()) {
+        QTimer::singleShot(2000, this, &AlbumMosaicWidget::loadAlbumMetadata);
+        return;
+    }
+
+    const int oldCount = m_albums.size();
+
+    m_albums.clear();
+    m_albumTracksCache.clear();
+    m_albumKeyToIndex.clear();
+    m_pendingPreload.clear();
+    m_activeAnims.clear();
+    QSet<QString> uniqueArtists;
+
+    for(const Fooyin::Track& track : tracks) {
+        const QString albumArtist = track.albumArtist();
+
+        if(albumArtist.isEmpty()) {
+            continue;
+        }
+
+        // Skip if genre filter is set and track doesn't match
+        if(!m_genreFilter.isEmpty() && track.hasGenres()) {
+            bool genreMatch = false;
+            for(const QString& genre : track.genres()) {
+                if(genre.contains(m_genreFilter, Qt::CaseInsensitive) || m_genreFilter.contains(genre, Qt::CaseInsensitive)) {
+                    genreMatch = true;
+                    break;
+                }
+            }
+            if(!genreMatch) {
+                continue;
+            }
+        } else if(!m_genreFilter.isEmpty() && !track.hasGenres()) {
+            continue;
+        }
+
+        // Skip if artist filter is set and track doesn't match
+        if(!m_artistFilter.isEmpty()) {
+            if(!track.albumArtist().contains(m_artistFilter, Qt::CaseInsensitive)
+               && !track.artist().contains(m_artistFilter, Qt::CaseInsensitive)) {
+                continue;
+            }
+        }
+
+        // Skip if search query is set and track doesn't match
+        if(!m_searchQuery.isEmpty()) {
+            if(!albumArtist.contains(m_searchQuery, Qt::CaseInsensitive)) {
+                continue;
+            }
+        }
+
+        if(!uniqueArtists.contains(albumArtist)) {
+            uniqueArtists.insert(albumArtist);
+
+            AlbumInfo info;
+            info.album = albumArtist; // Display name = artist name
+            info.albumArtist = albumArtist;
+            info.filePath = track.filepath();
+            info.track = track; // Representative track for CoverProvider
+            m_albums.append(info);
+        }
+
+        // Cache ALL tracks for this artist (for click-to-play)
+        m_albumTracksCache[albumArtist].push_back(track);
+    }
+
+    const bool setChanged = (m_albums.size() != oldCount);
+
+    if(setChanged) {
+        std::shuffle(m_albums.begin(), m_albums.end(), *QRandomGenerator::global());
+        qDebug() << "[AlbumMosaic] Loaded" << m_albums.size() << "artists from Fooyin library";
+        randomizeGrid();
+    } else {
+        updateMosaic();
+    }
+
+    // Rebuild key->index map (key = albumArtist only in Artist mode)
+    m_albumKeyToIndex.clear();
+    m_albumKeyToIndex.reserve(m_albums.size());
+    for(int i = 0; i < m_albums.size(); ++i) {
+        m_albumKeyToIndex.insert(m_albums[i].albumArtist, i);
+    }
+    // Re-resolve the playing artist index
+    m_playingAlbumIndex = m_albumKeyToIndex.value(m_currentPlayingArtist, -1);
+
+    // coverAdded handler — key is albumArtist only in Artist mode.
+    // Distinguishes add vs remove via trackHasCover so fooyin's native
+    // artwork actions (attach/search/remove) stay in sync with our tiles.
+    if(m_coverProvider) {
+        disconnect(m_coverProvider, &Fooyin::CoverProvider::coverAdded, this, nullptr);
+        connect(m_coverProvider, &Fooyin::CoverProvider::coverAdded, this, [this](const Fooyin::Track& track) {
+            const QString artistKey = track.albumArtist();
+            const int artistIndex = m_albumKeyToIndex.value(artistKey, -1);
+            if(artistIndex < 0) {
+                return;
+            }
+            m_scaledCache.remove(artistIndex);
+            if(m_pendingPreload.remove(artistIndex) && !m_coverPositions.isEmpty()) {
+                const QSize cellSize = m_coverPositions[0].size();
+                const auto coverSize = Fooyin::CoverProvider::findThumbnailSize(cellSize);
+                getCoverForPaint(artistIndex, cellSize, coverSize);
+            }
+            if(m_currentGridIndices.contains(artistIndex)) {
+                m_coverFadeProgress[artistIndex] = 0;
+                if(m_fadeTimer && !m_fadeTimer->isActive()) {
+                    m_fadeTimer->start();
+                }
+            }
+            update();
+
+            // Sync our own cover store with fooyin's artwork state for this track.
+            // Dedup: coverAdded fires once per selected track — only run the
+            // async check once per artist at a time.
+            if(m_coverSyncPending.contains(artistKey)) {
+                return;
+            }
+            m_coverSyncPending.insert(artistKey);
+            const QString cacheDir = QDir::homePath() + "/.local/share/fooyin/artistcovers";
+            const QString md5 = QString(QCryptographicHash::hash(artistKey.toUtf8(), QCryptographicHash::Md5).toHex());
+            const QString cachePath = cacheDir + "/" + md5 + ".jpg";
+            m_coverProvider->trackHasCover(track, Fooyin::Track::Cover::Artist)
+                .then(this, [this, artistKey, cachePath, track](bool hasCover) {
+                    m_coverSyncPending.remove(artistKey);
+                    const int idx = m_albumKeyToIndex.value(artistKey, -1);
+                    if(idx < 0 || idx >= m_albums.size()) {
+                        return;
+                    }
+                    if(!hasCover) {
+                        // Artwork removed in fooyin — drop our stored copies so the
+                        // tile clears. Only delete the parent-dir artist.jpg when it
+                        // is byte-identical to our cached copy (i.e. we wrote it);
+                        // never touch a file the user placed there themselves.
+                        QByteArray cached;
+                        if(QFile cf{cachePath}; cf.open(QIODevice::ReadOnly)) {
+                            cached = cf.readAll();
+                        }
+                        if(!cached.isEmpty()) {
+                            const QString trackDir = QFileInfo(m_albums[idx].track.filepath()).absolutePath();
+                            const QString artistJpg
+                                = QDir(QDir(trackDir).absoluteFilePath("..")).absoluteFilePath("artist.jpg");
+                            if(QFile af{artistJpg}; af.open(QIODevice::ReadOnly) && af.readAll() == cached) {
+                                af.close();
+                                QFile::remove(artistJpg);
+                            }
+                        }
+                        QFile::remove(cachePath);
+                        m_scaledCache.remove(idx);
+                        update();
+                    }
+                    else {
+                        // Artwork attached via fooyin's dialog — pull it from the
+                        // changed track (which may live in a different dir than our
+                        // representative track) into our stable md5 cache. Pixel-
+                        // compare against the existing cache so we only write when
+                        // the user actually attached a different image.
+                        m_coverProvider->trackCoverThumbnailAsync(track, QSize{512, 512},
+                                                                  Fooyin::Track::Cover::Artist)
+                            .then(this, [this, cachePath, artistKey](const QPixmap& pix) {
+                                const int idx2 = m_albumKeyToIndex.value(artistKey, -1);
+                                const auto artistPlaceholderKey
+                                    = m_coverProvider->placeholderCover(Fooyin::Track::Cover::Artist).cacheKey();
+                                if(idx2 < 0 || pix.isNull() || pix.cacheKey() == m_placeholderCacheKey
+                                   || pix.cacheKey() == artistPlaceholderKey) {
+                                    return;
+                                }
+                                const QPixmap existing{cachePath};
+                                if(!existing.isNull() && existing.toImage() == pix.toImage()) {
+                                    return;
+                                }
+                                QDir().mkpath(QFileInfo(cachePath).absolutePath());
+                                if(pix.save(cachePath, "JPG", 90)) {
+                                    m_scaledCache.remove(idx2);
+                                    update();
+                                }
+                            });
+                    }
+                });
+        });
+    }
+
+    // Auto-download missing artist covers if enabled
+    if(m_autoDownloadArtistCovers && setChanged && !m_downloadPending) {
+        m_downloadPending = true;
+        QTimer::singleShot(3000, this, [this]() {
+            m_downloadPending = false;
+            downloadMissingArtistCovers();
+        });
+    }
+}
+
 void AlbumMosaicWidget::updateMosaic()
 {
     m_coverPositions.clear();
@@ -504,6 +749,19 @@ void AlbumMosaicWidget::randomizeGrid()
                     QStringLiteral("%lastplayed%"), m_albumOrder,
                     [this](int albumIndex) { return m_albums[albumIndex].track; },
                     Qt::DescendingOrder);
+            }
+            break;
+        }
+        case SortMode::Alphabetical: {
+            // Sort by album name (album mode) or artist name (artist mode)
+            const QString sortScript = (m_displayMode == DisplayMode::Artist)
+                ? QStringLiteral("%albumartist%")
+                : QStringLiteral("%album%");
+            if(m_trackSorter) {
+                m_albumOrder = m_trackSorter->calcSortTracks(
+                    sortScript, m_albumOrder,
+                    [this](int albumIndex) { return m_albums[albumIndex].track; },
+                    Qt::AscendingOrder);
             }
             break;
         }
@@ -1025,8 +1283,9 @@ void AlbumMosaicWidget::contextMenuEvent(QContextMenuEvent* event)
             const AlbumInfo& album = m_albums[albumIndex];
             Fooyin::TrackList albumTracks = getAlbumTracks(album.album, album.albumArtist);
 
-            // Explicit "Play Album" action — always available, clearly labeled
-            QAction* playAction = menu.addAction(tr("Play Album"));
+            // Explicit "Play" action — label depends on display mode
+            const bool isArtistMode = (m_displayMode == DisplayMode::Artist);
+            QAction* playAction = menu.addAction(isArtistMode ? tr("Play Artist") : tr("Play Album"));
             connect(playAction, &QAction::triggered, this, [this, album]() {
                 playAlbum(album.album, album.albumArtist);
             });
@@ -1064,7 +1323,7 @@ void AlbumMosaicWidget::contextMenuEvent(QContextMenuEvent* event)
 
             // Our custom actions in submenus, clearly separated from Fooyin's
             menu.addSeparator();
-            QMenu* albumMenu = menu.addMenu(tr("Album"));
+            QMenu* albumMenu = menu.addMenu(isArtistMode ? tr("Artist") : tr("Album"));
             QAction* showInLibAction = albumMenu->addAction(tr("Show in Library"));
             connect(showInLibAction, &QAction::triggered, this, [this, album]() {
                 showInLibrary(album.album, album.albumArtist);
@@ -1073,6 +1332,14 @@ void AlbumMosaicWidget::contextMenuEvent(QContextMenuEvent* event)
                 QAction* searchCoverAction = albumMenu->addAction(tr("Search for Cover..."));
                 connect(searchCoverAction, &QAction::triggered, this, [this, albumTracks]() {
                     emit m_guiContext->trackSelection->requestArtworkSearch(albumTracks, false);
+                });
+            }
+            if(isArtistMode) {
+                QAction* downloadCoverAction = albumMenu->addAction(tr("Download Artist Cover..."));
+                connect(downloadCoverAction, &QAction::triggered, this, [this, albumArtist = album.albumArtist, track = album.track]() {
+                    if(m_artistCoverDownloader) {
+                        m_artistCoverDownloader->downloadSingleArtist(albumArtist, track);
+                    }
                 });
             }
 
@@ -1104,12 +1371,21 @@ void AlbumMosaicWidget::contextMenuEvent(QContextMenuEvent* event)
 Fooyin::TrackList AlbumMosaicWidget::getAlbumTracks(const QString& album, const QString& albumArtist)
 {
     // Bug 3: Use cache instead of scanning full library
-    const QString key = album + "|" + albumArtist;
+    // In Artist mode, the cache key is albumArtist only (not album|artist)
+    const QString key = (m_displayMode == DisplayMode::Artist) ? albumArtist : (album + "|" + albumArtist);
     if(m_albumTracksCache.contains(key)) {
         Fooyin::TrackList tracks = m_albumTracksCache[key];
-        std::sort(tracks.begin(), tracks.end(), [](const Fooyin::Track& a, const Fooyin::Track& b) {
-            return a.trackNumber() < b.trackNumber();
-        });
+        if(m_displayMode == DisplayMode::Artist) {
+            // Sort by album then track number for artist mode
+            std::sort(tracks.begin(), tracks.end(), [](const Fooyin::Track& a, const Fooyin::Track& b) {
+                if(a.album() != b.album()) return a.album() < b.album();
+                return a.trackNumber() < b.trackNumber();
+            });
+        } else {
+            std::sort(tracks.begin(), tracks.end(), [](const Fooyin::Track& a, const Fooyin::Track& b) {
+                return a.trackNumber() < b.trackNumber();
+            });
+        }
         return tracks;
     }
     return {};
@@ -1146,6 +1422,26 @@ void AlbumMosaicWidget::addQuickSettings(QMenu* menu)
     }
 
     auto* settings = m_coreContext->settingsManager;
+
+    // Display mode toggle (Album / Artist)
+    QMenu* modeMenu = menu->addMenu(tr("Display Mode"));
+    auto addModeAction = [this, settings, modeMenu](const QString& label, DisplayMode mode) {
+        QAction* action = modeMenu->addAction(label);
+        action->setCheckable(true);
+        action->setChecked(m_displayMode == mode);
+        connect(action, &QAction::triggered, this, [this, settings, mode]() {
+            if(m_displayMode != mode) {
+                m_displayMode = mode;
+                settings->set(QStringLiteral("AlbumMosaic/DisplayMode"), displayModeKey(mode));
+                loadAlbumMetadata();
+                update();
+            }
+        });
+    };
+    addModeAction(tr("Album Covers"), DisplayMode::Album);
+    addModeAction(tr("Artist Covers"), DisplayMode::Artist);
+
+    menu->addSeparator();
 
     // Animation toggle
     QAction* animToggle = menu->addAction(tr("Animation"));
@@ -1234,6 +1530,7 @@ void AlbumMosaicWidget::addQuickSettings(QMenu* menu)
         });
     };
     addSortAction(tr("Random"), SortMode::Random);
+    addSortAction(tr("Alphabetical"), SortMode::Alphabetical);
     addSortAction(tr("Year (newest first)"), SortMode::YearDesc);
     addSortAction(tr("Year (oldest first)"), SortMode::Year);
     addSortAction(tr("Rating (highest first)"), SortMode::Rating);
@@ -1255,6 +1552,8 @@ void AlbumMosaicWidget::loadSettings()
         m_sortMode = sortModeFromKey(settings->value(QStringLiteral("AlbumMosaic/SortMode")).toString());
         m_bgColor = QColor(settings->value(QStringLiteral("AlbumMosaic/BgColor")).toString());
         if(!m_bgColor.isValid()) m_bgColor = Qt::black;
+        m_displayMode = displayModeFromKey(settings->value(QStringLiteral("AlbumMosaic/DisplayMode")).toString());
+        m_autoDownloadArtistCovers = settings->value(QStringLiteral("AlbumMosaic/AutoDownloadArtistCovers")).toBool();
 
         // Sync inline sort combo
         if(m_sortCombo) {
@@ -1344,6 +1643,7 @@ void AlbumMosaicWidget::saveLayoutData(QJsonObject& layout)
     layout[QStringLiteral("bgColor")] = m_bgColor.name();
     layout[QStringLiteral("genreFilter")] = m_genreFilter;
     layout[QStringLiteral("artistFilter")] = m_artistFilter;
+    layout[QStringLiteral("displayMode")] = displayModeKey(m_displayMode);
 }
 
 void AlbumMosaicWidget::loadLayoutData(const QJsonObject& layout)
@@ -1380,6 +1680,9 @@ void AlbumMosaicWidget::loadLayoutData(const QJsonObject& layout)
     }
     if(layout.contains(QStringLiteral("artistFilter"))) {
         m_artistFilter = layout.value(QStringLiteral("artistFilter")).toString();
+    }
+    if(layout.contains(QStringLiteral("displayMode"))) {
+        m_displayMode = displayModeFromKey(layout.value(QStringLiteral("displayMode")).toString());
     }
 }
 
@@ -1699,8 +2002,60 @@ void AlbumMosaicWidget::paintEvent(QPaintEvent* event)
                         painter.drawText(textRect, Qt::AlignCenter, shortName);
                     }
                 } else {
-                    // Placeholder already drawn above, just add hover/playing/text overlay
+                    // No cover — draw placeholder
+                    if(m_displayMode == DisplayMode::Artist) {
+                        // Artist mode: colored tile with artist initial (distinct per artist)
+                        const QString name = album.albumArtist;
+                        const QString initial = name.isEmpty() ? "?" : QString(name.at(0)).toUpper();
 
+                        // Generate a consistent color from the artist name hash
+                        const uint hash = qHash(name);
+                        const int hue = hash % 360;
+                        const QColor bgColor = QColor::fromHsl(hue, 140, 80); // medium saturation, dark
+                        const QColor fgColor = QColor::fromHsl(hue, 60, 200); // light text
+
+                        painter.fillRect(cell, bgColor);
+
+                        // Draw large initial letter
+                        painter.setPen(fgColor);
+                        QFont font = painter.font();
+                        font.setPixelSize(cell.height() / 2);
+                        font.setBold(true);
+                        painter.setFont(font);
+                        painter.drawText(cell, Qt::AlignCenter, initial);
+
+                        // Artist name at bottom
+                        font.setPixelSize(cell.height() / 10);
+                        font.setBold(false);
+                        painter.setFont(font);
+                        painter.setPen(QColor(255, 255, 255, 180));
+                        QString shortName = name;
+                        if(shortName.length() > 20) {
+                            shortName = shortName.left(17) + "...";
+                        }
+                        QRect textRect = cell;
+                        textRect.setTop(cell.top() + cell.height() * 3 / 4);
+                        painter.drawText(textRect, Qt::AlignCenter, shortName);
+                    } else {
+                        // Album mode: generic placeholder (♪ + album name)
+                        painter.setPen(QColor(200, 200, 200));
+                        QFont font = painter.font();
+                        font.setPixelSize(cell.height() / 3);
+                        painter.setFont(font);
+                        painter.drawText(cell, Qt::AlignCenter, "♪");
+
+                        font.setPixelSize(cell.height() / 8);
+                        painter.setFont(font);
+                        QString shortName = album.album;
+                        if(shortName.length() > 15) {
+                            shortName = shortName.left(12) + "...";
+                        }
+                        QRect textRect = cell;
+                        textRect.setTop(cell.top() + cell.height() / 2);
+                        painter.drawText(textRect, Qt::AlignCenter, shortName);
+                    }
+
+                    // Common overlays for placeholder cells
                     if(isHovered) {
                         painter.setPen(QPen(QColor(255, 255, 255, 100), 3));
                         painter.setBrush(Qt::NoBrush);
@@ -1712,22 +2067,6 @@ void AlbumMosaicWidget::paintEvent(QPaintEvent* event)
                         painter.setBrush(Qt::NoBrush);
                         painter.drawRect(cell);
                     }
-
-                    painter.setPen(QColor(200, 200, 200));
-                    QFont font = painter.font();
-                    font.setPixelSize(cell.height() / 3);
-                    painter.setFont(font);
-                    painter.drawText(cell, Qt::AlignCenter, "♪");
-
-                    font.setPixelSize(cell.height() / 8);
-                    painter.setFont(font);
-                    QString shortName = album.album;
-                    if(shortName.length() > 15) {
-                        shortName = shortName.left(12) + "...";
-                    }
-                    QRect textRect = cell;
-                    textRect.setTop(cell.top() + cell.height() / 2);
-                    painter.drawText(textRect, Qt::AlignCenter, shortName);
                 }
             }
         }
@@ -1791,11 +2130,42 @@ QPixmap AlbumMosaicWidget::getCoverForPaint(int albumIndex, const QSize& cellSiz
         return {};
     }
 
-    QPixmap cover = m_coverProvider->trackCoverThumbnail(album.track, coverSize);
+    QPixmap cover = m_coverProvider->trackCoverThumbnail(album.track, coverSize, coverType());
 
     // Check if CoverProvider returned the placeholder (cover not yet loaded)
     if(cover.isNull() || cover.cacheKey() == m_placeholderCacheKey) {
-        return {}; // coverAdded will fire when the real cover is available
+        // Fallback for Artist mode: the downloader saves covers to a plugin
+        // cache keyed by md5(artist) so the plugin always finds them regardless
+        // of which track is representative. Also check the artist's parent dir
+        // and the track's own dir (for covers attached via fooyin's dialog).
+        if(m_displayMode == DisplayMode::Artist) {
+            const QString cacheDir = QDir::homePath() + "/.local/share/fooyin/artistcovers";
+            const QString md5 = QString(QCryptographicHash::hash(album.albumArtist.toUtf8(), QCryptographicHash::Md5).toHex());
+            const QString trackDir = QFileInfo(album.track.filepath()).absolutePath();
+            const QString parentDir = QDir(trackDir).absoluteFilePath("..");
+            const QDir artistDir{parentDir};
+
+            // Search order: plugin cache > artist parent dir > track dir (fooyin attach)
+            const QStringList candidates = {
+                cacheDir + "/" + md5 + ".jpg",
+                cacheDir + "/" + md5 + ".png",
+                artistDir.absoluteFilePath("artist.jpg"),
+                artistDir.absoluteFilePath("artist.png"),
+                QDir(trackDir).absoluteFilePath("artist.jpg"),
+                QDir(trackDir).absoluteFilePath("artist.png"),
+                QDir(trackDir).absoluteFilePath("artist.jpeg"),
+            };
+            for(const QString& path : candidates) {
+                if(QFile::exists(path) && cover.load(path)) {
+                    break;
+                }
+            }
+            if(cover.isNull() || cover.cacheKey() == m_placeholderCacheKey) {
+                return {}; // coverAdded will fire when the real cover is available
+            }
+        } else {
+            return {}; // coverAdded will fire when the real cover is available
+        }
     }
 
     // Scale to cell size and cache
@@ -1846,7 +2216,7 @@ void AlbumMosaicWidget::updateVisibleThumbnailKeys()
         if(albumIndex < 0 || albumIndex >= m_albums.size()) continue;
         const AlbumInfo& album = m_albums[albumIndex];
         if(!album.track.isValid()) continue;
-        keys.insert(m_coverProvider->thumbnailCacheKey(album.track, coverSize));
+        keys.insert(m_coverProvider->thumbnailCacheKey(album.track, coverSize, coverType()));
     }
 
     m_coverProvider->setVisibleThumbnailKeys(this, keys);
@@ -1869,5 +2239,48 @@ void AlbumMosaicWidget::advanceFade()
         update();
     } else {
         m_fadeTimer->stop();
+    }
+}
+
+Fooyin::Track::Cover AlbumMosaicWidget::coverType() const
+{
+    return (m_displayMode == DisplayMode::Artist) ? Fooyin::Track::Cover::Artist : Fooyin::Track::Cover::Front;
+}
+
+void AlbumMosaicWidget::downloadMissingArtistCovers()
+{
+    if(m_displayMode != DisplayMode::Artist || m_albums.isEmpty() || !m_artistCoverDownloader) {
+        return;
+    }
+
+    // Build list of artists with their representative tracks
+    QList<QPair<QString, Fooyin::Track>> artists;
+    for(const AlbumInfo& info : m_albums) {
+        if(info.track.isValid()) {
+            artists.append({info.albumArtist, info.track});
+        }
+    }
+
+    m_artistCoverDownloader->downloadMissing(artists);
+}
+
+void AlbumMosaicWidget::onArtistCoverDownloaded(const QString& artist)
+{
+    // Invalidate the scaled cache for this artist so the new cover loads
+    const int artistIndex = m_albumKeyToIndex.value(artist, -1);
+    if(artistIndex >= 0) {
+        m_scaledCache.remove(artistIndex);
+        // Also invalidate the CoverProvider cache for the representative track
+        if(m_coverProvider && m_albums[artistIndex].track.isValid()) {
+            m_coverProvider->removeFromCache(m_albums[artistIndex].track);
+        }
+        // Trigger a repaint to show the new cover
+        if(m_currentGridIndices.contains(artistIndex)) {
+            m_coverFadeProgress[artistIndex] = 0;
+            if(m_fadeTimer && !m_fadeTimer->isActive()) {
+                m_fadeTimer->start();
+            }
+        }
+        update();
     }
 }

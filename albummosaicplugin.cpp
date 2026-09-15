@@ -20,6 +20,7 @@
 #include "albummosaicplugin.h"
 
 #include "albummosaicwidget.h"
+#include "artistcoverdownloader.h"
 
 #include <gui/widgetprovider.h>
 #include <gui/coverprovider.h>
@@ -40,6 +41,8 @@ void AlbumMosaicPlugin::initialise(const Fooyin::CorePluginContext& context)
         context.settingsManager->createSetting(QStringLiteral("AlbumMosaic/AnimScope"), QStringLiteral("Single"));
         context.settingsManager->createSetting(QStringLiteral("AlbumMosaic/BgColor"), QStringLiteral("#000000"));
         context.settingsManager->createSetting(QStringLiteral("AlbumMosaic/SortMode"), QStringLiteral("Random"));
+        context.settingsManager->createSetting(QStringLiteral("AlbumMosaic/DisplayMode"), QStringLiteral("Album"));
+        context.settingsManager->createSetting(QStringLiteral("AlbumMosaic/AutoDownloadArtistCovers"), false);
     }
 }
 
@@ -54,5 +57,8 @@ void AlbumMosaicPlugin::initialise(const Fooyin::GuiPluginContext& context)
         m_coverProvider->setUsePlaceholder(false);
     }
 
-    context.widgetProvider->registerWidget("AlbumMosaic", [this]() { return new AlbumMosaicWidget(m_context, m_core.get(), m_coverProvider); }, "Album Mosaic");
+    // Create the shared artist cover downloader (singleton at plugin level)
+    m_artistCoverDownloader = new ArtistCoverDownloader(m_core.get(), m_context, this);
+
+    context.widgetProvider->registerWidget("AlbumMosaic", [this]() { return new AlbumMosaicWidget(m_context, m_core.get(), m_coverProvider, m_artistCoverDownloader); }, "Album Mosaic");
 }

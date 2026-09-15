@@ -52,12 +52,14 @@ class ToolTip;
 class WidgetContext;
 }
 
+class ArtistCoverDownloader;
+
 class AlbumMosaicWidget : public Fooyin::FyWidget
 {
     Q_OBJECT
 
 public:
-    explicit AlbumMosaicWidget(Fooyin::GuiPluginContext* guiContext, Fooyin::CorePluginContext* coreContext, Fooyin::CoverProvider* coverProvider, QWidget* parent = nullptr);
+    explicit AlbumMosaicWidget(Fooyin::GuiPluginContext* guiContext, Fooyin::CorePluginContext* coreContext, Fooyin::CoverProvider* coverProvider, ArtistCoverDownloader* artistCoverDownloader, QWidget* parent = nullptr);
     ~AlbumMosaicWidget() override;
 
     QString name() const override;
@@ -81,12 +83,15 @@ protected:
 
 private:
     // Enums (declared first — methods and members below reference them)
+    enum class DisplayMode { Album, Artist };
     enum class AnimType { Flip3D, Crossfade, Slide, Zoom, PageCurl, Random };
     enum class AnimSpeed { Fast, Medium, Slow };
     enum class AnimScope { Single, Multiple, Wave };
-    enum class SortMode { Random, Year, YearDesc, Rating, PlayCount, Recent };
+    enum class SortMode { Random, Year, YearDesc, Rating, PlayCount, Recent, Alphabetical };
 
     // Enum <-> settings key helpers (single source of truth for string mapping)
+    static QString displayModeKey(DisplayMode m);
+    static DisplayMode displayModeFromKey(const QString& s);
     static QString animTypeKey(AnimType t);
     static AnimType animTypeFromKey(const QString& s);
     static QString animSpeedKey(AnimSpeed s);
@@ -98,6 +103,8 @@ private:
     int animIntervalMs() const;
 
     void loadAlbumMetadata();
+    void loadAlbums();
+    void loadArtists();
     void updateMosaic();
     void triggerAnimation();
     void preloadCovers(int count);
@@ -111,6 +118,9 @@ private:
     void addQuickSettings(QMenu* menu);
     void loadSettings();
     Fooyin::TrackList getAlbumTracks(const QString& album, const QString& albumArtist);
+    void downloadMissingArtistCovers();
+    void onArtistCoverDownloaded(const QString& artist);
+    Fooyin::Track::Cover coverType() const;
 
     Fooyin::GuiPluginContext* m_guiContext;
     Fooyin::CorePluginContext* m_coreContext;
@@ -135,6 +145,7 @@ private:
     static constexpr int MAX_RECENT_SWAPPED = 64; // ~1 full wave batch stays protected
     void markAlbumSwapped(int albumIndex);
     QSet<int> m_pendingPreload; // Albums with an async cover load in flight from the preload loop
+    QSet<QString> m_coverSyncPending; // Artist keys with an async add/remove cover sync in flight
     bool m_animRetryPending{false}; // A short retry singleShot is already scheduled after a skipped batch
     int m_consecutiveSkips{0}; // For throttling the skipped-batch diagnostic log
     static constexpr int FADE_STEPS = 8; // Fade-in over 8 frames (~160ms at 20fps)
@@ -183,6 +194,10 @@ private:
     QString m_genreFilter; // Genre filter (empty = all genres)
     QString m_artistFilter; // Artist filter (empty = all artists)
     QColor m_bgColor{Qt::black}; // Grid background color
+    DisplayMode m_displayMode{DisplayMode::Album};
+    bool m_autoDownloadArtistCovers{false};
+    ArtistCoverDownloader* m_artistCoverDownloader{nullptr};
+    bool m_downloadPending{false};
 
     // Inline sort bar
     QComboBox* m_sortCombo{nullptr};

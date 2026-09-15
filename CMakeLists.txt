@@ -22,4 +22,6 @@ create_fooyin_plugin(
             albummosaicwidget.h
             albummosaicsettingsdialog.cpp
             albummosaicsettingsdialog.h
+            artistcoverdownloader.cpp
+            artistcoverdownloader.h
 )

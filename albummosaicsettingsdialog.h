@@ -61,6 +61,8 @@ private:
     QComboBox* m_animSpeedComboBox;
     QComboBox* m_animScopeComboBox;
     QComboBox* m_sortModeComboBox;
+    QComboBox* m_displayModeComboBox;
+    QCheckBox* m_autoDownloadCheckbox;
     QPushButton* m_bgColorButton;
     QColor m_bgColor;
 };

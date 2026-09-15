@@ -29,6 +29,8 @@ class GuiPluginContext;
 class CoverProvider;
 }
 
+class ArtistCoverDownloader;
+
 class AlbumMosaicPlugin : public QObject,
                          public Fooyin::Plugin,
                          public Fooyin::CorePlugin,
@@ -42,8 +44,14 @@ public:
     void initialise(const Fooyin::CorePluginContext& context) override;
     void initialise(const Fooyin::GuiPluginContext& context) override;
 
+    // Shared artist cover downloader — singleton at plugin level to avoid
+    // duplicate Discogs API calls and file writes when multiple widget
+    // instances are in Artist mode with auto-download enabled.
+    ArtistCoverDownloader* artistCoverDownloader() const { return m_artistCoverDownloader; }
+
 private:
     std::unique_ptr<Fooyin::CorePluginContext> m_core;
     Fooyin::GuiPluginContext* m_context{nullptr};
     Fooyin::CoverProvider* m_coverProvider{nullptr};
+    ArtistCoverDownloader* m_artistCoverDownloader{nullptr};
 };

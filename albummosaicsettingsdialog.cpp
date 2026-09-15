@@ -43,6 +43,8 @@ AlbumMosaicSettingsDialog::AlbumMosaicSettingsDialog(Fooyin::SettingsManager* se
     , m_animSpeedComboBox{new QComboBox(this)}
     , m_animScopeComboBox{new QComboBox(this)}
     , m_sortModeComboBox{new QComboBox(this)}
+    , m_displayModeComboBox{new QComboBox(this)}
+    , m_autoDownloadCheckbox{new QCheckBox(tr("Auto-download missing artist covers"), this)}
     , m_bgColorButton{new QPushButton(this)}
     , m_bgColor{Qt::black}
 {
@@ -51,6 +53,21 @@ AlbumMosaicSettingsDialog::AlbumMosaicSettingsDialog(Fooyin::SettingsManager* se
     auto* mainLayout = new QVBoxLayout(this);
     mainLayout->setContentsMargins(10, 10, 10, 10);
     mainLayout->setSpacing(10);
+
+    // Display mode group
+    auto* modeGroup = new QGroupBox(tr("Display Mode"), this);
+    auto* modeLayout = new QVBoxLayout(modeGroup);
+
+    auto* modeComboLayout = new QHBoxLayout();
+    modeComboLayout->addWidget(new QLabel(tr("Cover Type:"), this));
+    m_displayModeComboBox->addItem(tr("Album Covers"), QStringLiteral("Album"));
+    m_displayModeComboBox->addItem(tr("Artist Covers"), QStringLiteral("Artist"));
+    modeComboLayout->addWidget(m_displayModeComboBox);
+    modeLayout->addLayout(modeComboLayout);
+
+    modeLayout->addWidget(m_autoDownloadCheckbox);
+
+    mainLayout->addWidget(modeGroup);
 
     // Animation settings group
     auto* animGroup = new QGroupBox(tr("Animation"), this);
@@ -100,6 +117,7 @@ AlbumMosaicSettingsDialog::AlbumMosaicSettingsDialog(Fooyin::SettingsManager* se
     auto* sortLayout = new QHBoxLayout();
     sortLayout->addWidget(new QLabel(tr("Sort By:"), this));
     m_sortModeComboBox->addItem(tr("Random"), QStringLiteral("Random"));
+    m_sortModeComboBox->addItem(tr("Alphabetical"), QStringLiteral("Alphabetical"));
     m_sortModeComboBox->addItem(tr("Year (newest first)"), QStringLiteral("YearDesc"));
     m_sortModeComboBox->addItem(tr("Year (oldest first)"), QStringLiteral("Year"));
     m_sortModeComboBox->addItem(tr("Rating (highest first)"), QStringLiteral("Rating"));
@@ -230,6 +248,13 @@ void AlbumMosaicSettingsDialog::loadSettings()
     m_enableAnimCheckbox->setChecked(m_settingsManager->value(QStringLiteral("AlbumMosaic/EnableAnim")).toBool());
     m_columnCountSpinBox->setValue(m_settingsManager->value(QStringLiteral("AlbumMosaic/ColumnCount")).toInt());
 
+    QString displayMode = m_settingsManager->value(QStringLiteral("AlbumMosaic/DisplayMode")).toString();
+    int modeIndex = m_displayModeComboBox->findData(displayMode);
+    if(modeIndex >= 0) {
+        m_displayModeComboBox->setCurrentIndex(modeIndex);
+    }
+    m_autoDownloadCheckbox->setChecked(m_settingsManager->value(QStringLiteral("AlbumMosaic/AutoDownloadArtistCovers")).toBool());
+
     QString genreFilter = m_settingsManager->value(QStringLiteral("AlbumMosaic/GenreFilter")).toString();
     int index = m_genreComboBox->findData(genreFilter);
     if(index >= 0) {
@@ -292,6 +317,8 @@ void AlbumMosaicSettingsDialog::saveSettings()
     m_settingsManager->set(QStringLiteral("AlbumMosaic/AnimScope"), m_animScopeComboBox->currentData().toString());
     m_settingsManager->set(QStringLiteral("AlbumMosaic/BgColor"), m_bgColor.name());
     m_settingsManager->set(QStringLiteral("AlbumMosaic/SortMode"), m_sortModeComboBox->currentData().toString());
+    m_settingsManager->set(QStringLiteral("AlbumMosaic/DisplayMode"), m_displayModeComboBox->currentData().toString());
+    m_settingsManager->set(QStringLiteral("AlbumMosaic/AutoDownloadArtistCovers"), m_autoDownloadCheckbox->isChecked());
 
     m_settingsManager->storeSettings();
 }
@@ -312,6 +339,8 @@ void AlbumMosaicSettingsDialog::restoreDefaults()
     m_animSpeedComboBox->setCurrentIndex(1); // Medium
     m_animScopeComboBox->setCurrentIndex(0); // Single
     m_sortModeComboBox->setCurrentIndex(0); // Random
+    m_displayModeComboBox->setCurrentIndex(0); // Album
+    m_autoDownloadCheckbox->setChecked(false);
     m_bgColor = Qt::black;
     updateBgColorButton();
 }
