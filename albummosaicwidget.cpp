@@ -1857,6 +1857,12 @@ void AlbumMosaicWidget::paintEvent(QPaintEvent* event)
                         const ActiveAnim& anim = m_activeAnims[animIdx];
                         painter.save();
 
+                        // Clip covers to a circle in Artist mode (avatars)
+                        if(m_displayMode == DisplayMode::Artist) {
+                            painter.setRenderHint(QPainter::Antialiasing, true);
+                            painter.setClipRegion(QRegion(destRect, QRegion::Ellipse));
+                        }
+
                         // Determine which album to show based on animation progress and cover readiness
                         const bool showNew = (flipProgress >= 0.5f && anim.newCoverReady);
                         int albumToShow = showNew ? anim.newAlbumIndex : anim.oldAlbumIndex;
@@ -2034,6 +2040,11 @@ void AlbumMosaicWidget::paintEvent(QPaintEvent* event)
                     } else {
                         painter.save();
                         painter.setOpacity(opacity);
+                        // Clip covers to a circle in Artist mode (avatars)
+                        if(m_displayMode == DisplayMode::Artist) {
+                            painter.setRenderHint(QPainter::Antialiasing, true);
+                            painter.setClipRegion(QRegion(destRect, QRegion::Ellipse));
+                        }
                         if(isHovered) {
                             painter.setPen(QPen(QColor(255, 255, 255, 100), 3));
                             painter.setBrush(Qt::NoBrush);
@@ -2307,25 +2318,6 @@ QPixmap AlbumMosaicWidget::getCoverForPaint(int albumIndex, const QSize& cellSiz
     const double dpr = devicePixelRatioF();
     QPixmap scaled = cover.scaled(cellSize * dpr, Qt::KeepAspectRatio, Qt::SmoothTransformation);
     scaled.setDevicePixelRatio(dpr);
-
-    // In Artist mode, apply a circular mask so tiles render as rounded avatars.
-    // Done once per cache miss (not per frame) — negligible cost.
-    if(m_displayMode == DisplayMode::Artist && !scaled.isNull()) {
-        QPixmap rounded{scaled.size()};
-        rounded.setDevicePixelRatio(dpr);
-        rounded.fill(Qt::transparent);
-        QPainter rp{&rounded};
-        rp.setRenderHint(QPainter::Antialiasing, true);
-        rp.drawPixmap(0, 0, scaled);
-        rp.setCompositionMode(QPainter::CompositionMode_DestinationIn);
-        QRectF ellipseRect{0, 0, scaled.width() / dpr, scaled.height() / dpr};
-        rp.setBrush(Qt::black);
-        rp.setPen(Qt::NoPen);
-        rp.drawEllipse(ellipseRect);
-        rp.end();
-        scaled = rounded;
-    }
-
     m_scaledCache[albumIndex] = scaled;
     m_scaledCacheCellSize = cellSize;
     return scaled;
