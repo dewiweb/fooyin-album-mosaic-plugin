@@ -50,6 +50,7 @@ private:
     void saveSettings();
     void populateFiltersFromLibrary();
     void updateBgColorButton();
+    void rebuildSortCombo();
 
     Fooyin::SettingsManager* m_settingsManager;
     Fooyin::MusicLibrary* m_library;

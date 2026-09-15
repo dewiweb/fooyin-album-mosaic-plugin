@@ -40,6 +40,26 @@
 
 using namespace Qt::StringLiterals;
 
+namespace {
+// Normalize a directory or artist name for fuzzy comparison — ignores case,
+// punctuation/spacing and a leading "the" ("Beatles, The" == "The Beatles").
+QString normArtistDirName(const QString& name)
+{
+    QString s = name.toLower();
+    QString out;
+    out.reserve(s.size());
+    for(const QChar c : s) {
+        if(c.isLetterOrNumber()) {
+            out.append(c);
+        }
+    }
+    if(out.startsWith("the"_L1)) {
+        out = out.mid(3);
+    }
+    return out;
+}
+} // namespace
+
 ArtistCoverDownloader::ArtistCoverDownloader(Fooyin::CorePluginContext* coreContext,
                                              Fooyin::GuiPluginContext* guiContext,
                                              QObject* parent)
@@ -69,6 +89,25 @@ void ArtistCoverDownloader::downloadMissing(const QList<QPair<QString, Fooyin::T
     // Filter out artists that already have a cover in the plugin cache or
     // in the artist's parent directory — avoids re-downloading on every restart.
     const QString cacheDir = QDir::homePath() + "/.local/share/fooyin/artistcovers";
+
+    // Detect representative-track directories shared by several artists: an
+    // artist.jpg in such a dir is ambiguous and must not count as "has cover".
+    QHash<QString, QString> dirFirstArtist;
+    m_sharedRepDirs.clear();
+    for(const auto& [artist, track] : artists) {
+        if(!track.isValid()) {
+            continue;
+        }
+        const QString dir = QFileInfo(track.filepath()).absolutePath();
+        auto it = dirFirstArtist.find(dir);
+        if(it == dirFirstArtist.end()) {
+            dirFirstArtist.insert(dir, artist);
+        }
+        else if(it.value() != artist) {
+            m_sharedRepDirs.insert(dir);
+        }
+    }
+
     QList<QPair<QString, Fooyin::Track>> toDownload;
 
     for(const auto& [artist, track] : artists) {
@@ -81,13 +120,16 @@ void ArtistCoverDownloader::downloadMissing(const QList<QPair<QString, Fooyin::T
         if(track.isValid()) {
             const QString trackDir = QFileInfo(track.filepath()).absolutePath();
             const QString artistDir = QDir(trackDir).absoluteFilePath("..");
-            // Check both track dir (fooyin native) and artist parent dir
-            const QStringList checks = {
-                QDir(trackDir).absoluteFilePath("artist.jpg"),
-                QDir(trackDir).absoluteFilePath("artist.png"),
+            // Track dir files only count when the dir is single-artist;
+            // the artist parent dir is always unambiguous.
+            QStringList checks = {
                 QDir(artistDir).absoluteFilePath("artist.jpg"),
                 QDir(artistDir).absoluteFilePath("artist.png"),
             };
+            if(!m_sharedRepDirs.contains(trackDir)) {
+                checks << QDir(trackDir).absoluteFilePath("artist.jpg")
+                       << QDir(trackDir).absoluteFilePath("artist.png");
+            }
             bool found = false;
             for(const QString& path : checks) {
                 if(QFile::exists(path)) {
@@ -430,19 +472,29 @@ void ArtistCoverDownloader::saveCover(const QByteArray& data)
         return;
     }
 
-    // Save to TWO locations:
-    // 1. Plugin cache (~/.local/share/fooyin/artistcovers/<md5>.jpg) — the plugin
-    //    always finds it via fallback, regardless of which track is representative.
-    //    Uses Lollypop-style md5 keying, no dependency on directory layout.
-    // 2. Artist's parent directory (artist.jpg) — convention for other players
-    //    (MusicBee, MediaMonkey). Fooyin can find it if the user adds
-    //    %path%/../artist.* to the artist paths config.
-    // NOTE: We do NOT save to the track's directory — fooyin's %path%/artist.*
-    // would find it for ALL artists whose tracks share that directory (e.g.
-    // compilation albums), causing the same cover to appear for different artists.
+    // Save to the plugin cache, plus one directory copy for interoperability —
+    // but only into a directory that unambiguously belongs to this artist:
+    //   - track dir itself when it is named after the artist (flat layout)
+    //   - its parent when that is named after the artist (Artist/Album layout)
+    //   - parent as best effort only when the rep dir is NOT shared between
+    //     artists (otherwise e.g. /Music/Compilations/artist.jpg would leak the
+    //     same image to every artist with tracks under it)
     const QString trackDir = QFileInfo(m_currentTrack.filepath()).absolutePath();
-    const QString artistDir = QDir(trackDir).absoluteFilePath("..");
-    const QString artistPath = QDir(artistDir).absoluteFilePath("artist.jpg");
+    const QDir trackQDir{trackDir};
+    QDir parentQDir = trackQDir;
+    parentQDir.cdUp();
+    const QString normArtist = normArtistDirName(m_currentArtist);
+
+    QString artistDirPath;
+    if(!normArtist.isEmpty() && normArtistDirName(trackQDir.dirName()) == normArtist) {
+        artistDirPath = trackDir;
+    }
+    else if(!normArtist.isEmpty() && normArtistDirName(parentQDir.dirName()) == normArtist) {
+        artistDirPath = parentQDir.absolutePath();
+    }
+    else if(!m_sharedRepDirs.contains(trackDir)) {
+        artistDirPath = parentQDir.absolutePath();
+    }
 
     // Plugin cache path
     const QString cacheDir = QDir::homePath() + "/.local/share/fooyin/artistcovers";
@@ -460,8 +512,9 @@ void ArtistCoverDownloader::saveCover(const QByteArray& data)
         saved = true;
     }
 
-    // Save to artist's parent directory
-    if(artistDir != trackDir) { // avoid writing the same file twice
+    // Save to the artist directory copy (if we found a safe location)
+    if(!artistDirPath.isEmpty() && artistDirPath != cacheDir) {
+        const QString artistPath = QDir(artistDirPath).absoluteFilePath("artist.jpg");
         QFile artistFile{artistPath};
         if(artistFile.open(QIODevice::WriteOnly) && artistFile.write(data) == data.size()) {
             artistFile.close();

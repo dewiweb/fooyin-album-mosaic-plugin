@@ -92,6 +92,9 @@ private:
     // Enum <-> settings key helpers (single source of truth for string mapping)
     static QString displayModeKey(DisplayMode m);
     static DisplayMode displayModeFromKey(const QString& s);
+    // Returns the sort modes that make sense for the given display mode.
+    // (Year and Rating are album-centric; an artist has no year or rating.)
+    static QList<SortMode> sortModesForDisplayMode(DisplayMode m);
     static QString animTypeKey(AnimType t);
     static AnimType animTypeFromKey(const QString& s);
     static QString animSpeedKey(AnimSpeed s);
@@ -120,6 +123,7 @@ private:
     Fooyin::TrackList getAlbumTracks(const QString& album, const QString& albumArtist);
     void downloadMissingArtistCovers();
     void onArtistCoverDownloaded(const QString& artist);
+    void rebuildSortCombo();
     Fooyin::Track::Cover coverType() const;
 
     Fooyin::GuiPluginContext* m_guiContext;
@@ -146,6 +150,7 @@ private:
     void markAlbumSwapped(int albumIndex);
     QSet<int> m_pendingPreload; // Albums with an async cover load in flight from the preload loop
     QSet<QString> m_coverSyncPending; // Artist keys with an async add/remove cover sync in flight
+    QSet<QString> m_sharedArtistDirs; // Track dirs holding >1 artist — artist.jpg there is ambiguous
     bool m_animRetryPending{false}; // A short retry singleShot is already scheduled after a skipped batch
     int m_consecutiveSkips{0}; // For throttling the skipped-batch diagnostic log
     static constexpr int FADE_STEPS = 8; // Fade-in over 8 frames (~160ms at 20fps)

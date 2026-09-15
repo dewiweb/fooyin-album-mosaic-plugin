@@ -25,6 +25,7 @@
 #include <QList>
 #include <QObject>
 #include <QPair>
+#include <QSet>
 #include <QString>
 
 class QNetworkReply;
@@ -99,4 +100,7 @@ private:
     QNetworkReply* m_reply{nullptr};
     QTimer* m_throttleTimer{nullptr};
     bool m_cancelled{false};
+    // Rep-track dirs shared by several artists in the last downloadMissing() call —
+    // covers must not be written into such dirs' parents (ambiguous location).
+    QSet<QString> m_sharedRepDirs;
 };

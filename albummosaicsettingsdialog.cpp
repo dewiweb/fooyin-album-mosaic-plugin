@@ -65,6 +65,11 @@ AlbumMosaicSettingsDialog::AlbumMosaicSettingsDialog(Fooyin::SettingsManager* se
     modeComboLayout->addWidget(m_displayModeComboBox);
     modeLayout->addLayout(modeComboLayout);
 
+    // Rebuild sort combo when display mode changes — Year and Rating are
+    // album-centric and don't apply to artists.
+    connect(m_displayModeComboBox, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &AlbumMosaicSettingsDialog::rebuildSortCombo);
+
     modeLayout->addWidget(m_autoDownloadCheckbox);
 
     mainLayout->addWidget(modeGroup);
@@ -116,13 +121,7 @@ AlbumMosaicSettingsDialog::AlbumMosaicSettingsDialog(Fooyin::SettingsManager* se
 
     auto* sortLayout = new QHBoxLayout();
     sortLayout->addWidget(new QLabel(tr("Sort By:"), this));
-    m_sortModeComboBox->addItem(tr("Random"), QStringLiteral("Random"));
-    m_sortModeComboBox->addItem(tr("Alphabetical"), QStringLiteral("Alphabetical"));
-    m_sortModeComboBox->addItem(tr("Year (newest first)"), QStringLiteral("YearDesc"));
-    m_sortModeComboBox->addItem(tr("Year (oldest first)"), QStringLiteral("Year"));
-    m_sortModeComboBox->addItem(tr("Rating (highest first)"), QStringLiteral("Rating"));
-    m_sortModeComboBox->addItem(tr("Play Count (most played)"), QStringLiteral("PlayCount"));
-    m_sortModeComboBox->addItem(tr("Recently Played"), QStringLiteral("Recent"));
+    // Items are rebuilt per display mode via rebuildSortCombo().
     sortLayout->addWidget(m_sortModeComboBox);
     gridLayout->addLayout(sortLayout);
 
@@ -295,10 +294,56 @@ void AlbumMosaicSettingsDialog::loadSettings()
     if(!m_bgColor.isValid()) m_bgColor = Qt::black;
     updateBgColorButton();
 
-    QString sortMode = m_settingsManager->value(QStringLiteral("AlbumMosaic/SortMode")).toString();
-    index = m_sortModeComboBox->findData(sortMode);
-    if(index >= 0) {
-        m_sortModeComboBox->setCurrentIndex(index);
+    // rebuildSortCombo() (called by the display-mode signal) sets the items,
+    // then we restore the saved sort if it's still valid for this mode.
+    rebuildSortCombo();
+    const QString sortMode = m_settingsManager->value(QStringLiteral("AlbumMosaic/SortMode")).toString();
+    const int sortIdx = m_sortModeComboBox->findData(sortMode);
+    if(sortIdx >= 0) {
+        m_sortModeComboBox->setCurrentIndex(sortIdx);
+    }
+}
+
+void AlbumMosaicSettingsDialog::rebuildSortCombo()
+{
+    if(!m_sortModeComboBox || !m_displayModeComboBox) {
+        return;
+    }
+    QSignalBlocker blocker(m_sortModeComboBox);
+    const QString currentData = m_sortModeComboBox->currentData().toString();
+    m_sortModeComboBox->clear();
+
+    const bool isArtist = (m_displayModeComboBox->currentData().toString() == QLatin1String("Artist"));
+
+    // Album mode: all sort modes. Artist mode: no Year or Rating (album-centric).
+    struct SortEntry { QString label; QString key; };
+    const QList<SortEntry> albumModes = {
+        {tr("Random"),                        QStringLiteral("Random")},
+        {tr("Alphabetical"),                  QStringLiteral("Alphabetical")},
+        {tr("Year (newest first)"),           QStringLiteral("YearDesc")},
+        {tr("Year (oldest first)"),           QStringLiteral("Year")},
+        {tr("Rating (highest first)"),        QStringLiteral("Rating")},
+        {tr("Play Count (most played)"),      QStringLiteral("PlayCount")},
+        {tr("Recently Played"),               QStringLiteral("Recent")},
+    };
+    const QList<SortEntry> artistModes = {
+        {tr("Random"),                        QStringLiteral("Random")},
+        {tr("Alphabetical"),                  QStringLiteral("Alphabetical")},
+        {tr("Play Count (most played)"),      QStringLiteral("PlayCount")},
+        {tr("Recently Played"),               QStringLiteral("Recent")},
+    };
+
+    for(const auto& e : (isArtist ? artistModes : albumModes)) {
+        m_sortModeComboBox->addItem(e.label, e.key);
+    }
+
+    // Restore selection if still valid, else Random.
+    int idx = m_sortModeComboBox->findData(currentData);
+    if(idx < 0) {
+        idx = m_sortModeComboBox->findData(QStringLiteral("Random"));
+    }
+    if(idx >= 0) {
+        m_sortModeComboBox->setCurrentIndex(idx);
     }
 }
 
@@ -339,7 +384,7 @@ void AlbumMosaicSettingsDialog::restoreDefaults()
     m_animSpeedComboBox->setCurrentIndex(1); // Medium
     m_animScopeComboBox->setCurrentIndex(0); // Single
     m_sortModeComboBox->setCurrentIndex(0); // Random
-    m_displayModeComboBox->setCurrentIndex(0); // Album
+    m_displayModeComboBox->setCurrentIndex(0); // Album (triggers rebuildSortCombo)
     m_autoDownloadCheckbox->setChecked(false);
     m_bgColor = Qt::black;
     updateBgColorButton();
